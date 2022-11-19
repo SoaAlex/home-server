@@ -1,0 +1,149 @@
+version: '2.4'
+services:
+  ## TOOLS
+  # Nginx proxy manager to handle multiple services in 1 machine
+  nginx-proxy-manager:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: nginx_proxy_manager
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '81:81'
+      - '443:443'
+    volumes:
+      - ./data:/data
+      - ./letsencrypt:/etc/letsencrypt
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.7
+  
+  ## SERVICES
+  # PiHole: AdBlocking DNS service
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    ports:
+      - '53:53/tcp'
+      - '53:53/udp'
+      - "67:67/udp"
+      - '82:80/tcp'
+    volumes:
+      - './etc-pihole:/etc/pihole'
+      - './etc-dnsmasq.d:/etc/dnsmasq.d'
+    cap_add:
+      - NET_ADMIN
+    environment:
+      WEBPASSWORD: ${PIHOLE_PASSWORD}
+      ServerIP: 192.168.1.54
+      ServerIPv6: ${RBP_IPV6}
+      PROXY_LOCATION: pihole
+      VIRTUAL_HOST: ${PIHOLE_URL}
+      VIRTUAL_PORT: 80
+      PIHOLE_DNS_: "8.8.8.8;8.4.4.8"
+      DNSSEC: "true"
+      IPv6: "true"
+    restart: always
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.2
+
+  # Bitwarden: password manager
+  bitwarden:
+    image: vaultwarden/server:latest
+    container_name: bitwarden
+    ports:
+      - '83:80'
+      - '3012:3012'
+    volumes:
+      - /vw-data/:/data
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.3
+
+  # Wireguard: efficient VPN
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Paris
+      - SERVERURL=${vpn-soaalex.duckdns.org}
+      - SERVERPORT=51820
+      - PEERS=4
+      - PEERDNS=172.19.0.2
+      - LOG_CONFS=true
+    volumes:
+      - /path/to/appdata/config:/config
+      - /lib/modules:/lib/modules
+    ports:
+      - 51820:51820/udp
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv6.conf.all.disable_ipv6=0
+    restart: always
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.5
+
+  # NextCloud: Home Cloud - NAS
+  nextcloud:
+    image: linuxserver/nextcloud:latest
+    container_name: nextcloud
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Paris
+    volumes:
+      - ./data/nextcloud/config:/config
+      - ./data/nextcloud/data:/data
+    ports:
+      - 84:443
+    depends_on:
+      - mariadb
+    restart: unless-stopped
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.4
+
+  mariadb:
+    image: linuxserver/mariadb:latest
+    container_name: mariadb
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - TZ=Europe/Paris
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    volumes:
+      - ./data/nextcloud/mariadb:/config
+    restart: unless-stopped 
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.6
+      
+## NETWORK CONFIG
+networks:
+  netv4v6:
+    name: netv4v6
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.19.0.0/24
+          gateway: 172.19.0.1
+          ip_range: 172.20.5.0/24
+        - subnet: fdbc:6331:bae8::/48
+          gateway: fdbc:6331:bae8::1
