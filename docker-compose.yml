@@ -77,7 +77,7 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Europe/Paris
-      - SERVERURL=${vpn-soaalex.duckdns.org}
+      - SERVERURL=${WIREGUARD_URL}
       - SERVERPORT=51820
       - PEERS=4
       - PEERDNS=172.19.0.2
