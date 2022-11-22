@@ -95,6 +95,24 @@ services:
       netv4v6:
         ipv4_address: 172.19.0.5
 
+  mariadb:
+    image: linuxserver/mariadb:latest
+    container_name: mariadb
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - TZ=Europe/Paris
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    volumes:
+      - ./data/nextcloud/mariadb:/config
+    restart: unless-stopped 
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.6
+
   # NextCloud: Home Cloud - NAS
   nextcloud:
     image: linuxserver/nextcloud:latest
@@ -116,24 +134,6 @@ services:
     networks:
       netv4v6:
         ipv4_address: 172.19.0.4
-
-  mariadb:
-    image: linuxserver/mariadb:latest
-    container_name: mariadb
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
-      - TZ=Europe/Paris
-      - MYSQL_DATABASE=nextcloud
-      - MYSQL_USER=nextcloud
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
-    volumes:
-      - ./data/nextcloud/mariadb:/config
-    restart: unless-stopped 
-    networks:
-      netv4v6:
-        ipv4_address: 172.19.0.6
       
 ## NETWORK CONFIG
 networks:
