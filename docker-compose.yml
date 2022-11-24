@@ -100,23 +100,20 @@ services:
     image: nextcloud:latest
     container_name: nextcloud
     environment:
+      - TZ=Europe/Paris
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_DATABASE=nextcloud
       - MYSQL_USER=nextcloud
-      - MYSQL_HOST=nextcloud-db
-      - PHP_UPLOAD_LIMIT=10G
-      - PHP_MEMORY_LIMIT=512M
-      - PUID=1000
-      - PGID=1000
-      - TZ=Europe/Paris
+      - MYSQL_HOST=db
     volumes:
       - /mnt/raid/nextcloud:/var/www/html
     ports:
       - 84:80
     links:
-      - mariadb
+      - db
     depends_on:
-      - mariadb
+      - db
     restart: unless-stopped
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
@@ -124,19 +121,16 @@ services:
       netv4v6:
         ipv4_address: 172.19.0.4
 
-  # NextCloud Database
-  mariadb:
+  # NextCloud MariaDB Database
+  db:
     image: yobasystems/alpine-mariadb:latest
-    container_name: mariadb
     command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
     environment:
-      - PUID=1000
-      - PGID=1000
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
       - TZ=Europe/Paris
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_DATABASE=nextcloud
       - MYSQL_USER=nextcloud
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
     volumes:
       - /mnt/raid/nextcloud-db:/var/lib/mysql
     restart: unless-stopped 
