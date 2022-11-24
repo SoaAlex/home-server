@@ -95,9 +95,40 @@ services:
       netv4v6:
         ipv4_address: 172.19.0.5
 
+  # NextCloud: Home Cloud - NAS
+  nextcloud:
+    image: nextcloud:latest
+    container_name: nextcloud
+    environment:
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_HOST=nextcloud-db
+      - PHP_UPLOAD_LIMIT=10G
+      - PHP_MEMORY_LIMIT=512M
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Paris
+    volumes:
+      - /mnt/raid/nextcloud:/var/www/html
+    ports:
+      - 84:80
+    links:
+      - mariadb
+    depends_on:
+      - mariadb
+    restart: unless-stopped
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.4
+
+  # NextCloud Database
   mariadb:
-    image: linuxserver/mariadb:latest
+    image: yobasystems/alpine-mariadb:latest
     container_name: mariadb
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW --innodb-file-per-table=1 --skip-innodb-read-only-compressed
     environment:
       - PUID=1000
       - PGID=1000
@@ -107,34 +138,12 @@ services:
       - MYSQL_USER=nextcloud
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
     volumes:
-      - ./data/nextcloud/mariadb:/config
+      - /mnt/raid/nextcloud-db:/var/lib/mysql
     restart: unless-stopped 
     networks:
       netv4v6:
         ipv4_address: 172.19.0.6
 
-  # NextCloud: Home Cloud - NAS
-  nextcloud:
-    image: linuxserver/nextcloud:latest
-    container_name: nextcloud
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Europe/Paris
-    volumes:
-      - ./data/nextcloud/config:/config
-      - ./data/nextcloud/data:/data
-    ports:
-      - 84:443
-    depends_on:
-      - mariadb
-    restart: unless-stopped
-    sysctls:
-      - net.ipv6.conf.all.disable_ipv6=0
-    networks:
-      netv4v6:
-        ipv4_address: 172.19.0.4
-      
 ## NETWORK CONFIG
 networks:
   netv4v6:
