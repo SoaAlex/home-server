@@ -106,6 +106,7 @@ services:
       - MYSQL_DATABASE=nextcloud
       - MYSQL_USER=nextcloud
       - MYSQL_HOST=db
+      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_URL}
     volumes:
       - /mnt/raid/nextcloud:/var/www/html
     ports:
