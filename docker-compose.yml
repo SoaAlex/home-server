@@ -97,20 +97,24 @@ services:
 
   # NextCloud: Home Cloud - NAS
   nextcloud:
-    image: nextcloud:latest
+    image: linuxserver/nextcloud:latest
     container_name: nextcloud
     environment:
       - TZ=Europe/Paris
+      - PUID=1000
+      - PGID=1000
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_DATABASE=nextcloud
       - MYSQL_USER=nextcloud
-      - MYSQL_HOST=db
-      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_URL}
+      - MYSQL_HOST=mariadb
+      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_URL} # Use NextCloud's OCC tool to add local network (this line is not working) 
+      #  sudo docker exec -u 30 nextcloud php occ config:system:set trusted_domains 1 --value="192.168.1.53"
     volumes:
-      - /mnt/raid/nextcloud:/var/www/html
+      - /mnt/raid/nextcloud/config:/config
+      - /mnt/raid/nextcloud/data:/data
     ports:
-      - 84:80
+      - 84:443
     links:
       - db
     depends_on:
@@ -126,14 +130,17 @@ services:
   db:
     image: yobasystems/alpine-mariadb:latest
     command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
+    container_name: db
     environment:
       - TZ=Europe/Paris
+      - PUID=1000
+      - PGID=1000
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_DATABASE=nextcloud
       - MYSQL_USER=nextcloud
     volumes:
-      - /mnt/raid/nextcloud-db:/var/lib/mysql
+      - /mnt/raid/nextcloud/db:/var/lib/mysql
     restart: unless-stopped 
     networks:
       netv4v6:
