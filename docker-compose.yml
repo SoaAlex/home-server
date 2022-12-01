@@ -108,6 +108,7 @@ services:
       - MYSQL_DATABASE=nextcloud
       - MYSQL_USER=nextcloud
       - MYSQL_HOST=mariadb
+      - PHP_UPLOAD_LIMIT=10124M
       - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_URL} # Use NextCloud's OCC tool to add local network (this line is not working) 
       #  sudo docker exec -u 30 nextcloud php occ config:system:set trusted_domains 1 --value="192.168.1.53"
     volumes:
@@ -140,7 +141,7 @@ services:
       - MYSQL_DATABASE=nextcloud
       - MYSQL_USER=nextcloud
     volumes:
-      - /mnt/raid/nextcloud/db:/var/lib/mysql
+      - /home/pi/nextcloud/db:/var/lib/mysql
     restart: unless-stopped 
     networks:
       netv4v6:
