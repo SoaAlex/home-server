@@ -97,55 +97,26 @@ services:
 
   # NextCloud: Home Cloud - NAS
   nextcloud:
-    image: linuxserver/nextcloud:latest
-    container_name: nextcloud
+    image: nextcloud/all-in-one:latest-arm64
+    container_name: nextcloud-aio-mastercontainer
     environment:
       - TZ=Europe/Paris
-      - PUID=1000
-      - PGID=1000
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
-      - MYSQL_DATABASE=nextcloud
-      - MYSQL_USER=nextcloud
-      - MYSQL_HOST=mariadb
-      - PHP_UPLOAD_LIMIT=10124M
-      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_URL} # Use NextCloud's OCC tool to add local network (this line is not working) 
-      #  sudo docker exec -u 30 nextcloud php occ config:system:set trusted_domains 1 --value="192.168.1.53"
+      - APACHE_PORT=11000
+      - NEXTCLOUD_UPLOAD_LIMIT=10G
+      - APACHE_IP_BINDING=0.0.0.0
+      - NEXTCLOUD_DATADIR=/mnt/raid/nextcloud
+      - NEXTCLOUD_MOUNT=/mnt/
     volumes:
-      - /mnt/raid/nextcloud/config:/config
-      - /mnt/raid/nextcloud/data:/data
+      - nextcloud_aio_mastercontainer:/mnt/docker-aio-config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     ports:
-      - 84:443
-    links:
-      - db
-    depends_on:
-      - db
+      - 8080:8080
     restart: unless-stopped
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
     networks:
       netv4v6:
         ipv4_address: 172.19.0.4
-
-  # NextCloud MariaDB Database
-  db:
-    image: yobasystems/alpine-mariadb:latest
-    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
-    container_name: db
-    environment:
-      - TZ=Europe/Paris
-      - PUID=1000
-      - PGID=1000
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
-      - MYSQL_DATABASE=nextcloud
-      - MYSQL_USER=nextcloud
-    volumes:
-      - /home/pi/nextcloud/db:/var/lib/mysql
-    restart: unless-stopped 
-    networks:
-      netv4v6:
-        ipv4_address: 172.19.0.6
 
 ## NETWORK CONFIG
 networks:
@@ -159,3 +130,8 @@ networks:
           ip_range: 172.20.5.0/24
         - subnet: fdbc:6331:bae8::/48
           gateway: fdbc:6331:bae8::1
+
+## VOLUMES CONFIG
+volumes:
+  nextcloud_aio_mastercontainer:
+    name: nextcloud_aio_mastercontainer
