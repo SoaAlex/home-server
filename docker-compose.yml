@@ -58,7 +58,7 @@ services:
       - '83:80'
       - '3012:3012'
     volumes:
-      - /vw-data/:/data
+      - ./vw-data/:/data
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
     restart: always
@@ -83,7 +83,7 @@ services:
       - PEERDNS=172.19.0.2
       - LOG_CONFS=true
     volumes:
-      - /path/to/appdata/config:/config
+      - ./wireguard/config:/config
       - /lib/modules:/lib/modules
     ports:
       - 51820:51820/udp

@@ -44,4 +44,12 @@ elif cat /proc/mdstat | grep -q 'sync'; then
 fi
 
 # sudo docker exec --user www-data -it nextcloud-aio-nextcloud php occ files:scan --all
+
 # convmv -f utf-8 -t utf-8 -r --notest --nfc
+
+# proxy_set_header Host $host;
+# proxy_set_header X-Forwarded-Proto $scheme;
+# proxy_set_header X-Real-IP $remote_addr;
+# proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+# proxy_max_temp_file_size 0;
+# client_max_body_size 0;
