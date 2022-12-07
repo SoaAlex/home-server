@@ -6,12 +6,16 @@ DUCKDNS_TOKEN=""
 DUCKDNS_DOMAINS=""
 
 
-## 0. Update
+###### 0. Setup ######
+# 0.1 Update
 sudo apt update
 sudo apt upgrade
 
+# 0.2 SSH
+# https://pimylifeup.com/raspberry-pi-ssh-keys/
 
-## 1. Install Docker / Docker Compose and Portainer
+
+###### 1. Install Docker / Docker Compose and Portainer ######
 # Docker
 curl -sSL https://get.docker.com | sh
 sudo usermod -aG docker pi
@@ -24,12 +28,12 @@ sudo pip3 install docker-compose
 sudo systemctl enable docker
 
 # Enable IPv6
-sudo echo "{\
+sudo bash -c 'echo "{\
 	"ipv6": true,\
 	"fixed-cidr-v6": "fd7a:fb81:cc8c::/48",\
 	"ip6tables": true,\
 	"experimental": true\
-    }" > /etc/docker/daemon.json
+    }" > /etc/docker/daemon.json'
 
 # Install Portainer
 sudo docker pull portainer/portainer-ce:latest
@@ -37,7 +41,10 @@ sudo docker run -d -p 9000:9000 --name=portainer --restart=always -v /var/run/do
 read -p "Docker and docker compose installed. Please setup portainer at http://${PI_URL}:9000" -n 1 -r
 
 
-## 2. Setup Raid 1
+###### 2. Setup Raid 1 ######
+sudo apt-get install mdadm
+sudo mdadm --assemble --scan --verbose /dev/md0 ${RAID1_HDD1} ${RAID1_HDD2}
+sudo mdadm --readwrite /dev/md0
 # 2.1 Check if Raid is already active
 if cat /proc/mdstat | grep -q 'active'; then
     echo "Raid 1 is already active"
@@ -59,14 +66,16 @@ else
 fi
 
 # 2.2. Auto mount
-sudo echo "/dev/md0 /mnt/raid ext4 defaults,noatime,nofail 0 0" > /etc/fstab 
+sudo mount /dev/md0 /mnt/raid
+sudo bash -c 'echo "/dev/md0 /mnt/raid ext4 defaults,noatime,nofail 0 0" >> /etc/fstab'
 
 # 2.3. Auto shutdown disks
+sudo apt-get install hdparm
 sudo hdparm -S 60 ${RAID1_HDD1}
 sudo hdparm -S 60 ${RAID1_HDD2}
 
 
-## 3. Setup DuckDNS 
+###### 3. Setup DuckDNS ######
 sudo mkdir /home/pi/home-server/duckdns
 sudo touch /home/pi/home-server/duckdns/duck.sh
 sudo echo 'echo url="https://www.duckdns.org/update?domains=${DUCKDNS_DOMAINS}&token=${DUCKDNS_TOKEN}" | curl -k -o ~/duckdns/duck.log -K -' > duck.sh
@@ -74,12 +83,20 @@ sudo chmod 700 duck.sh
 read -p "Please paste this into crontab -e: */5 * * * * home/pi/home-server/duckdns/duck.sh >/dev/null 2>&1" -n 1 -r
 
 
-## 4. Install home server services using docker-compose:
+###### 4. Install home server services using docker-compose ######
 cd /home/pi/home-server
 docker-compose up -d
 
 
-## Random commands helper
+###### 5. Enable Samba ######
+# http://emery.claude.free.fr/nas-samba.html
+sudo apt-get install samba samba-common-bin
+sudo cp /etc/samba/smb.conf /etc/samba/smb.conf.origine
+sudo /etc/init.d/smbd stop
+sudo /etc/init.d/smbd start
+
+
+###### Random commands helper ######
 # sudo docker exec --user www-data -it nextcloud-aio-nextcloud php occ files:scan --all
 
 # convmv -f utf-8 -t utf-8 -r --notest --nfc

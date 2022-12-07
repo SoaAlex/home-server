@@ -2,3 +2,5 @@
 /etc-dnsmasq.d
 /etc-pihole
 /letsencrypt
+/vw-data
+/wireguard
