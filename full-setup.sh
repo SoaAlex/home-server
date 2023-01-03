@@ -107,7 +107,3 @@ sudo /etc/init.d/smbd start
 # proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 # proxy_max_temp_file_size 0;
 # client_max_body_size 0;
-
-# test
-# test
-# test
