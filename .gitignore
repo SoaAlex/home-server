@@ -4,3 +4,17 @@
 /letsencrypt
 /vw-data
 /wireguard
+/duckdns
+server.env
+.server.env
+/server.env
+/homeassistant
+/jackett
+/jellyfin
+/nzbget
+/organizr
+/overseerr
+/plex
+/qbittorrent
+/radarr
+/sonarr

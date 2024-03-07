@@ -1,0 +1,174 @@
+version: '2.4'
+
+services:
+  # MEDIA SERVER
+  # Plex: Media Server Netflix lite
+  plex:
+    image: lscr.io/linuxserver/plex:latest
+    container_name: plex
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - VERSION=docker
+      - PLEX_CLAIM=${PLEX_CLAIM}
+    ports:
+      - 32400:32400
+    volumes:
+      - /home/pi/home-server/plex:/config
+      - /mnt/raid/library:/data/library
+    restart: unless-stopped
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.17
+      
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/London
+      - JELLYFIN_PublishedServerUrl=192.168.1.53 #optional
+    volumes:
+      - /home/pi/home-server/jellyfin:/config
+      - /mnt/raid/library:/data/library
+    ports:
+      - 8096:8096
+      - 8920:8920 #optional
+      - 7359:7359/udp #optional
+    restart: unless-stopped
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.8
+    
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/London
+    volumes:
+      - /home/pi/home-server/radarr:/config
+      - /mnt/raid/:/data #optional
+    ports:
+      - 7878:7878
+    restart: unless-stopped
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.9
+    
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/London
+    volumes:
+      - /home/pi/home-server/sonarr:/config
+      - /mnt/raid:/data #optional
+    ports:
+      - 8989:8989
+    restart: unless-stopped
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.10
+    
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: jackett
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/London
+      - AUTO_UPDATE=true
+    volumes:
+      - /home/pi/home-server/jackett:/config
+    ports:
+      - 32600:8080
+    restart: unless-stopped
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.11
+    
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/London
+      - WEBUI_PORT=8080
+    volumes:
+      - /home/pi/home-server/qbittorrent:/config
+      - /home/pi/home-server/data/torrents:/data/torrents #optional
+    restart: unless-stopped
+    ports:
+      - 32500:8080
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.12
+    
+  nzbget:
+    image: lscr.io/linuxserver/nzbget:latest
+    container_name: nzbget
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/London
+
+    volumes:
+      - /home/pi/home-server/nzbget:/config
+      - /home/pi/home-server/data/usenet:/data/usenet #optional
+    ports:
+      - 6789:6789
+    restart: unless-stopped
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.13
+
+  organizr:
+    container_name: organizr
+    hostname: organizr
+    image: organizr/organizr:latest
+    restart: unless-stopped
+    ports:
+        - 84:80
+    volumes:
+        - /home/pi/home-server/organizr:/config
+    environment:
+        - PUID=1000
+        - PGID=1000
+        - TZ=Europe/London
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.15
+          
+  overseerr:
+    image: sctx/overseerr:latest
+    container_name: overseerr
+    environment:
+      - LOG_LEVEL=debug
+      - TZ=Europe/London
+    ports:
+      - 5055:5055
+    volumes:
+      - /home/pi/home-server/overseerr:/app/config
+    restart: unless-stopped
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.16
+
+## NETWORK CONFIG
+networks:
+  netv4v6:
+    name: netv4v6
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.19.0.0/24
+          gateway: 172.19.0.1
+          ip_range: 172.20.5.0/24
+        - subnet: fdbc:6331:bae8::/48
+          gateway: fdbc:6331:bae8::1
