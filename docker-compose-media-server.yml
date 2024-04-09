@@ -15,11 +15,22 @@ services:
       - 32400:32400
     volumes:
       - /home/pi/home-server/plex:/config
-      - /mnt/raid/library:/data/library
+      - /mnt/raid/data/library:/data/library
     restart: unless-stopped
     networks:
       netv4v6:
         ipv4_address: 172.19.0.17
+    deploy:
+      resources:
+        limits:
+          memory: 4000M
+    healthcheck:
+      test: wget --timeout=15 --quiet --tries=1 --spider http://localhost:32400/identity
+
+      interval: 1m00s
+      timeout: 15s
+      retries: 3
+      start_period: 1m00s
       
   jellyfin:
     image: lscr.io/linuxserver/jellyfin:latest
@@ -31,7 +42,7 @@ services:
       - JELLYFIN_PublishedServerUrl=192.168.1.53 #optional
     volumes:
       - /home/pi/home-server/jellyfin:/config
-      - /mnt/raid/library:/data/library
+      - /mnt/raid/data/library:/data/library
     ports:
       - 8096:8096
       - 8920:8920 #optional
@@ -40,7 +51,17 @@ services:
     networks:
       netv4v6:
         ipv4_address: 172.19.0.8
-    
+    deploy:
+      resources:
+        limits:
+          cpus: '3.8'
+          memory: 4000M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8096/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+          
   radarr:
     image: lscr.io/linuxserver/radarr:latest
     container_name: radarr
@@ -50,13 +71,23 @@ services:
       - TZ=Europe/London
     volumes:
       - /home/pi/home-server/radarr:/config
-      - /mnt/raid/:/data #optional
+      - /mnt/raid/data:/data #optional
     ports:
       - 7878:7878
     restart: unless-stopped
     networks:
       netv4v6:
         ipv4_address: 172.19.0.9
+    deploy:
+      resources:
+        limits:
+          cpus: '3.8'
+          memory: 4000M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7878/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     
   sonarr:
     image: lscr.io/linuxserver/sonarr:latest
@@ -67,13 +98,23 @@ services:
       - TZ=Europe/London
     volumes:
       - /home/pi/home-server/sonarr:/config
-      - /mnt/raid:/data #optional
+      - /mnt/raid/data:/data #optional
     ports:
       - 8989:8989
     restart: unless-stopped
     networks:
       netv4v6:
         ipv4_address: 172.19.0.10
+    deploy:
+      resources:
+        limits:
+          cpus: '3.8'
+          memory: 4000M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8989/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     
   jackett:
     image: lscr.io/linuxserver/jackett:latest
@@ -86,11 +127,21 @@ services:
     volumes:
       - /home/pi/home-server/jackett:/config
     ports:
-      - 32600:8080
+      - 9117:9117
     restart: unless-stopped
     networks:
       netv4v6:
         ipv4_address: 172.19.0.11
+    deploy:
+      resources:
+        limits:
+          cpus: '3.8'
+          memory: 4000M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9117/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:latest
@@ -102,13 +153,23 @@ services:
       - WEBUI_PORT=8080
     volumes:
       - /home/pi/home-server/qbittorrent:/config
-      - /home/pi/home-server/data/torrents:/data/torrents #optional
-    restart: unless-stopped
+      - /mnt/raid/data/torrents:/data/torrents #optional
     ports:
       - 32500:8080
+    restart: unless-stopped
     networks:
       netv4v6:
         ipv4_address: 172.19.0.12
+    deploy:
+      resources:
+        limits:
+          cpus: '3.8'
+          memory: 4000M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     
   nzbget:
     image: lscr.io/linuxserver/nzbget:latest
@@ -120,14 +181,24 @@ services:
 
     volumes:
       - /home/pi/home-server/nzbget:/config
-      - /home/pi/home-server/data/usenet:/data/usenet #optional
+      - /mnt/raid/data/usenet:/data/usenet #optional
     ports:
       - 6789:6789
     restart: unless-stopped
     networks:
       netv4v6:
         ipv4_address: 172.19.0.13
-
+    deploy:
+      resources:
+        limits:
+          cpus: '3.8'
+          memory: 4000M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6789/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+          
   organizr:
     container_name: organizr
     hostname: organizr
@@ -144,6 +215,12 @@ services:
     networks:
       netv4v6:
         ipv4_address: 172.19.0.15
+    deploy:
+      resources:
+        limits:
+          cpus: '3.8'
+          memory: 4000M
+
           
   overseerr:
     image: sctx/overseerr:latest
@@ -159,7 +236,43 @@ services:
     networks:
       netv4v6:
         ipv4_address: 172.19.0.16
-
+    deploy:
+      resources:
+        limits:
+          cpus: '3.8'
+          memory: 4000M
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5055/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+          
+  flaresolver:
+    image: flaresolverr/flaresolverr:latest
+    container_name: flaresolver
+    environment:
+      - LOG_LEVEL=debug
+      - TZ=Europe/London
+    ports:
+      - 8191:8191
+      - 8192:8192
+    volumes:
+      - /home/pi/home-server/flaresolver:/config
+    restart: unless-stopped
+    networks:
+      netv4v6:
+        ipv4_address: 172.19.0.18
+    deploy:
+      resources:
+        limits:
+          cpus: '3.8'
+          memory: 4000M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8191/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+          
 ## NETWORK CONFIG
 networks:
   netv4v6:
