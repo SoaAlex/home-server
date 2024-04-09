@@ -1,0 +1,39 @@
+
+# Loads default set of integrations. Do not remove.
+default_config:
+
+# Load frontend themes from the themes folder
+frontend:
+  themes: !include_dir_merge_named themes
+
+# Text to speech
+tts:
+  - platform: google_translate
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+homeassistant:
+  external_url: "https://homeassistant.soaalex.com" # ne pas indiquer le port
+  internal_url: "http://192.168.1.53:8123" # adresse locale de HA avec le port
+http:
+  use_x_forwarded_for: true
+  trusted_proxies: # adresse(s) IP locale(s) du Proxy
+    - 192.168.1.53
+    - 127.0.0.1
+    - 172.19.0.7
+    - fe80::a15e:f37f:5986:1322
+  ip_ban_enabled: false
+
+cover:
+  - platform: template
+    covers:
+      garage_door:
+        friendly_name: "Garage"
+        open_cover:
+          service: switch.turn_on
+          entity_id: switch.shellyplus1_d4d4daf4a2a4_switch_0  # Replace with your Shelly 1 switch entity ID
+        close_cover:
+          service: switch.turn_off
+          entity_id: switch.shellyplus1_d4d4daf4a2a4_switch_0
