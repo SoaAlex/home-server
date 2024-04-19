@@ -26,14 +26,92 @@ http:
     - fe80::a15e:f37f:5986:1322
   ip_ban_enabled: false
 
+template:
+  - sensor:
+      - name: "Garage Door"
+        state: >
+          {% if is_state('binary_sensor.garage_sensor', 'on') and is_state('switch.garage_door', 'on') %}
+            opening
+          {% elif is_state('binary_sensor.garage_sensor', 'off') and is_state('switch.garage_door', 'on') %}
+            closing
+          {% elif is_state('binary_sensor.garage_sensor', 'off') %}
+            open
+          {% else %}
+            closed
+          {% endif %}
+      - name: "Portail"
+        state: >
+          {% if is_state('binary_sensor.gate', 'on') and is_state('switch.gate', 'on') %}
+            opening
+          {% elif is_state('binary_sensor.gate', 'off') and is_state('switch.gate', 'on') %}
+            closing
+          {% elif is_state('binary_sensor.gate', 'off') %}
+            open
+          {% else %}
+            closed
+          {% endif %}
+
 cover:
   - platform: template
     covers:
       garage_door:
-        friendly_name: "Garage"
+        device_class: garage
+        friendly_name: "Garage Door"
+        value_template: "{{ states('sensor.garage_door') }}"
         open_cover:
-          service: switch.turn_on
-          entity_id: switch.shellyplus1_d4d4daf4a2a4_switch_0  # Replace with your Shelly 1 switch entity ID
+          - condition: state
+            entity_id: sensor.garage_door
+            state: "closed"
+          - service: switch.toggle
+            target:
+              entity_id: switch.garage_door
         close_cover:
-          service: switch.turn_off
-          entity_id: switch.shellyplus1_d4d4daf4a2a4_switch_0
+          - condition: state
+            entity_id: sensor.garage_door
+            state: "open"
+          - service: switch.toggle
+            target:
+              entity_id: switch.garage_door
+        stop_cover:
+          service: switch.toggle
+          target:
+            entity_id: switch.garage_door
+        icon_template: >-
+          {% if is_state('cover.garage_door', 'opening') or is_state('cover.garage_door', 'closing') %}
+            mdi:garage-alert
+          {% elif is_state('cover.garage_door', 'open') %}
+            mdi:garage-open
+          {% else %}
+            mdi:garage
+          {% endif %}
+
+      gate:
+        device_class: gate
+        friendly_name: "Portail"
+        value_template: "{{ states('sensor.gate') }}"
+        open_cover:
+          - condition: state
+            entity_id: sensor.gate
+            state: "closed"
+          - service: switch.toggle
+            target:
+              entity_id: switch.gate
+        close_cover:
+          - condition: state
+            entity_id: sensor.gate
+            state: "open"
+          - service: switch.toggle
+            target:
+              entity_id: switch.gate
+        stop_cover:
+          service: switch.toggle
+          target:
+            entity_id: switch.gate
+        icon_template: >-
+          {% if is_state('cover.gate', 'opening') or is_state('cover.gate', 'closing') %}
+            mdi:garage-alert
+          {% elif is_state('cover.gate', 'open') %}
+            mdi:garage-open
+          {% else %}
+            mdi:garage
+          {% endif %}
