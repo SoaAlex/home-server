@@ -41,11 +41,11 @@ template:
           {% endif %}
       - name: "Portail"
         state: >
-          {% if is_state('binary_sensor.gate', 'on') and is_state('switch.gate', 'on') %}
+          {% if is_state('binary_sensor.gate_sensor', 'on') and is_state('switch.gate', 'on') %}
             opening
-          {% elif is_state('binary_sensor.gate', 'off') and is_state('switch.gate', 'on') %}
+          {% elif is_state('binary_sensor.gate_sensor', 'off') and is_state('switch.gate', 'on') %}
             closing
-          {% elif is_state('binary_sensor.gate', 'off') %}
+          {% elif is_state('binary_sensor.gate_sensor', 'off') %}
             open
           {% else %}
             closed
@@ -88,17 +88,17 @@ cover:
       gate:
         device_class: gate
         friendly_name: "Portail"
-        value_template: "{{ states('sensor.gate') }}"
+        value_template: "{{ states('sensor.portail') }}"
         open_cover:
           - condition: state
-            entity_id: sensor.gate
+            entity_id: sensor.portail
             state: "closed"
           - service: switch.toggle
             target:
               entity_id: switch.gate
         close_cover:
           - condition: state
-            entity_id: sensor.gate
+            entity_id: sensor.portail
             state: "open"
           - service: switch.toggle
             target:
@@ -109,9 +109,9 @@ cover:
             entity_id: switch.gate
         icon_template: >-
           {% if is_state('cover.gate', 'opening') or is_state('cover.gate', 'closing') %}
-            mdi:garage-alert
+            mdi:gate-alert
           {% elif is_state('cover.gate', 'open') %}
-            mdi:garage-open
+            mdi:gate-open
           {% else %}
-            mdi:garage
+            mdi:gate
           {% endif %}
