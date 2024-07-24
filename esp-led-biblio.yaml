@@ -1,0 +1,66 @@
+esphome:
+  name: eps-led-biblio
+  friendly_name: eps-led-biblio
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "REDACTED"
+
+ota:
+  password: "REDACTED"
+
+wifi:
+  ssid: REDACTED
+  password: REDACTED
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "REDACTED"
+    password: "REDACTED"
+
+binary_sensor:
+  # statut
+  - platform: status
+    name: "Statut"
+
+sensor:
+  # Qualité du signal
+  - platform: wifi_signal
+    name: "Signal Wifi"
+    update_interval: 60s
+
+  # Temps de fonctionnement
+  - platform: uptime
+    name: "Allumé depuis (s)"
+    id: uptime_sec
+       
+switch:
+# Bouton de redémarrage
+  - platform: restart
+    name: "Redémarrage"
+
+# Transformation des secondes en jours
+text_sensor:
+  - platform: template
+    name: "Allumé depuis (j)"
+    lambda: |-
+      int seconds = (id(uptime_sec).state);
+      int days = seconds / (24 * 3600);
+      seconds = seconds % (24 * 3600); 
+      int hours = seconds / 3600;
+      seconds = seconds % 3600;
+      int minutes = seconds /  60;
+      seconds = seconds % 60;
+      return { (String(days) +"d " + String(hours) +"h " + String(minutes) +"m "+ String(seconds) +"s").c_str() };          
+    icon: mdi:clock-start
+    update_interval: 60s
+    

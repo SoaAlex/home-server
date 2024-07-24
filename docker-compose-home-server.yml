@@ -151,6 +151,16 @@ services:
       timeout: 10s
       retries: 3
 
+  esphome:
+    container_name: esphome
+    image: esphome/esphome
+    volumes:
+      - /path/to/esphome/config:/config
+      - /etc/localtime:/etc/localtime:ro
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+
 ## NETWORK CONFIG
 networks:
   netv4v6:
