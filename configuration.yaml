@@ -26,6 +26,12 @@ http:
     - fe80::a15e:f37f:5986:1322
   ip_ban_enabled: false
 
+panel_iframe:
+  esphome:
+    title: 'ESPHome'
+    url: 'http://192.168.1.53:6052/'
+    icon: mdi:car-esp
+
 template:
   - sensor:
       - name: "Garage Door"
