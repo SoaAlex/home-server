@@ -1,0 +1,55 @@
+services:
+  teslamate:
+    image: teslamate/teslamate:latest
+    restart: always
+    environment:
+      - ENCRYPTION_KEY=${TESLAMATE_ENCRYPTION_KEY}
+      - DATABASE_USER=${POSTGRES_USER}
+      - DATABASE_PASS=${POSTGRES_PASSWORD}
+      - DATABASE_NAME=${POSTGRES_DB}
+      - DATABASE_HOST=common-postgres
+      - MQTT_HOST=teslamate-mosquitto
+      - MQTT_PORT=1883
+    ports:
+      - 4000:4000
+    cap_drop:
+      - all
+    networks:
+      - default
+      - common-network
+
+  grafana:
+    image: teslamate/grafana:latest
+    restart: always
+    environment:
+      - DATABASE_USER=${POSTGRES_USER}
+      - DATABASE_PASS=${POSTGRES_PASSWORD}
+      - DATABASE_NAME=${POSTGRES_DB}
+      - DATABASE_HOST=common-postgres
+    ports:
+      - 3000:3000
+    volumes:
+      - teslamate-grafana-data:/var/lib/grafana
+      - /volume1/docker/teslamate/Teslamate-CustomGrafanaDashboards/customdashboards.yml:/etc/grafana/provisioning/dashboards/customdashboards.yml
+      - /volume1/docker/teslamate/Teslamate-CustomGrafanaDashboards/dashboards:/TeslamateCustomDashboards
+    networks:
+      - default
+      - common-network
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: always
+    container_name: teslamate-mosquitto
+    command: mosquitto -c /mosquitto-no-auth.conf
+    ports:
+      - 1883:1883
+    volumes:
+      - /volume1/docker/teslamate/mosquitto-teslamate/mosquitto-conf:/mosquitto/config
+      - /volume1/docker/teslamate/mosquitto-teslamate/mosquitto-data:/mosquitto/data
+
+volumes:
+  teslamate-grafana-data:
+
+networks:
+  common-network:
+    external: true
