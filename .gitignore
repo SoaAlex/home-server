@@ -17,7 +17,7 @@ home-server/pihole/pihole/cli_pw
 home-server/pihole/pihole/versions
 home-server/pihole/pihole/gravity.db
 home-server/pihole/pihole/gravity_old.db
-home-server/pihole/pihole/pihole-FTL.db
+home-server/pihole/pihole/pihole-FTL.db*
 home-server/pihole/pihole/logrotate
 
 # Vaultwarden data
