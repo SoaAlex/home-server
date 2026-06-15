@@ -90,6 +90,9 @@ services:
       - ./aiostreams/.env
     volumes:
       - /volume1/docker/home-server/aiostreams:/app/data
+    networks:
+      - home-server-network
+      - common-network
 
 networks:
   home-server-network:
@@ -110,3 +113,6 @@ networks:
         - subnet: "2a01:cb0c:9da:3e00::/64" # <-- CORRECTED to your network
         - subnet: 192.168.1.0/24
           gateway: 192.168.1.1
+
+  common-network:
+    external: true
