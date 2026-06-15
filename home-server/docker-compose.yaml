@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  ## TOOLS
+  nginx-proxy-manager:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: nginx_proxy_manager
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '81:81'
+      - '443:443'
+    volumes:
+      - /volume1/docker/home-server/nginx-proxy-manager/data:/data
+      - /volume1/docker/home-server/nginx-proxy-manager/letsencrypt:/etc/letsencrypt
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+    networks:
+      - home-server-network
+
+  ## SERVICES
+  pihole:
+    image: pihole/pihole
+    container_name: Pi-Hole
+    networks:
+      macvlan_net:
+        ipv4_address: 192.168.1.100
+    security_opt:
+      - no-new-privileges:false
+    restart: unless-stopped
+    volumes:
+      - /volume1/docker/home-server/pihole/dnsmasq.d:/etc/dnsmasq.d:rw
+      - /volume1/docker/home-server/pihole/pihole:/etc/pihole:rw
+    environment:
+      FTLCONF_webserver_api_password: ${PIHOLE_WEBPASSWORD}
+      FTLCONF_webserver_port: 8080
+      FTLCONF_dns_listeningMode: all
+      TZ: Europe/Paris
+      DNSMASQ_USER: pihole
+      PIHOLE_UID: 1000
+      PIHOLE_GID: 10
+    cap_add:
+      - SYS_TIME
+      - SYS_NICE
+
+  bitwarden:
+    image: vaultwarden/server:latest
+    container_name: bitwarden
+    ports:
+      - '83:80'
+      - '3012:3012'
+    volumes:
+      - /volume1/docker/home-server/vw-data:/data
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+    restart: unless-stopped
+    networks:
+      - home-server-network
+
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Paris
+      - SERVERURL=vpn.soaalex.com
+      - SERVERPORT=51820
+      - PEERS=4
+      - PEERDNS=192.168.1.100
+      - LOG_CONFS=true
+    volumes:
+      - /volume1/docker/home-server/wireguard/config:/config
+
+    restart: unless-stopped
+    networks:
+      macvlan_net:
+        ipv4_address: 192.168.1.105
+
+  aiostreams:
+    image: ghcr.io/viren070/aiostreams:latest
+    container_name: aiostreams
+    restart: unless-stopped
+    ports:
+      - 1080:3000
+    env_file:
+      - ./aiostreams/.env
+    volumes:
+      - /volume1/docker/home-server/aiostreams:/app/data
+
+networks:
+  home-server-network:
+    enable_ipv6: true
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.16.238.0/24
+        - subnet: "2001:db8:1:2::/80" # This is an internal network, it stays as is.
+
+  macvlan_net:
+    driver: macvlan
+    driver_opts:
+      parent: bridge0
+    ipam:
+      config:
+        - subnet: "2a01:cb0c:9da:3e00::/64" # <-- CORRECTED to your network
+        - subnet: 192.168.1.0/24
+          gateway: 192.168.1.1

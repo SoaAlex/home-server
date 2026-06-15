@@ -1,0 +1,21 @@
+services:
+  database:
+    image: postgres:17
+    container_name: common-postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - common-network
+
+volumes:
+  postgres-data:
+
+networks:
+  common-network:
+    name: common-network
+    driver: bridge

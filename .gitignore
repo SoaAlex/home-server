@@ -1,21 +1,57 @@
-/data
-/etc-dnsmasq.d
-/etc-pihole
-/letsencrypt
-/vw-data
-/wireguard
-/duckdns
-server.env
-.server.env
-/server.env
-/homeassistant
-/jackett
-/jellyfin
-/nzbget
-/organizr
-/overseerr
-/plex
-/qbittorrent
-/radarr
-/sonarr
-/teslamate
+# Secrets — never commit real .env files
+.env
+*.env
+
+# Nginx Proxy Manager data
+home-server/nginx-proxy-manager/data/
+home-server/nginx-proxy-manager/letsencrypt/
+
+# Pi-hole runtime data
+home-server/pihole/pihole/gravity_backups/
+home-server/pihole/pihole/listsCache/
+home-server/pihole/pihole/config_backups/
+home-server/pihole/pihole/migration_backup/
+home-server/pihole/pihole/hosts/
+home-server/pihole/pihole/dhcp.leases
+home-server/pihole/pihole/cli_pw
+home-server/pihole/pihole/versions
+home-server/pihole/pihole/gravity.db
+home-server/pihole/pihole/gravity_old.db
+home-server/pihole/pihole/pihole-FTL.db
+home-server/pihole/pihole/logrotate
+
+# Vaultwarden data
+home-server/vw-data/
+
+# Wireguard peer keys & runtime
+home-server/wireguard/
+
+# Aiostreams app data (not config)
+home-server/aiostreams/
+
+# TeslaMate
+teslamate/mosquitto-teslamate/mosquitto-data/
+teslamate/import/
+teslamate/teslamate_backup.sql
+teslamate/Teslamate-CustomGrafanaDashboards/
+
+# qBittorrent state & torrents
+qbittorrent/qBittorrent/BT_backup/
+qbittorrent/qBittorrent/GeoDB/
+qbittorrent/qBittorrent/logs/
+qbittorrent/qBittorrent/rss/
+qbittorrent/qBittorrent/qBittorrent-data.conf
+# qbittorrent/qBittorrent/qBittorrent.conf
+
+# Common postgres volume (managed by docker)
+common/postgres-data/
+
+# General
+*.log
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.miss
+tmp/
+
+teslamate-backup.sql
