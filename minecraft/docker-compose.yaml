@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  minecraft:
+    image: 'itzg/minecraft-server:latest'
+    container_name: minecraft_server
+    restart: unless-stopped
+    pull_policy: always
+    tty: true
+    stdin_open: true
+    mem_limit: 5g
+    ports:
+      - '39999:25565'
+    volumes:
+      - /volume1/docker/minecraft/data:/data
+      - /volume1/docker/minecraft/modpacks:/modpacks:ro
+    environment:
+      EULA: "TRUE"
+      MEMORY: "4G"
+      TYPE: CURSEFORGE
+      CF_SERVER_MOD: /modpacks/ServerFiles-7.2.zip

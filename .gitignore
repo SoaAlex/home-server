@@ -54,4 +54,8 @@ common/postgres-data/
 *.miss
 tmp/
 
+# Minecraft Server
+minecraft/modpacks
+minecraft/data
+
 teslamate-backup.sql
