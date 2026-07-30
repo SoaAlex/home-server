@@ -60,9 +60,17 @@ services:
   wireguard:
     image: lscr.io/linuxserver/wireguard:latest
     container_name: wireguard
+    # Host mode, not macvlan: a macvlan child cannot reach its parent's own IP,
+    # which made the NAS itself (192.168.1.55) unreachable from the VPN.
+    # Host mode also gives kernel-space WireGuard and avoids double NAT.
+    network_mode: host
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
+    # No sysctls here: runc rejects namespaced net.* sysctls under network_mode
+    # host. src_valid_mark is only needed for wg-quick's default-route trick
+    # (client mode, AllowedIPs 0.0.0.0/0). This is a server with /32 peer routes,
+    # so it never applies. If it were ever needed, set it on the host instead.
     environment:
       - PUID=1000
       - PGID=1000
@@ -74,11 +82,7 @@ services:
       - LOG_CONFS=true
     volumes:
       - /volume1/docker/home-server/wireguard/config:/config
-
     restart: unless-stopped
-    networks:
-      macvlan_net:
-        ipv4_address: 192.168.1.105
 
   aiostreams:
     image: ghcr.io/viren070/aiostreams:latest
@@ -94,6 +98,26 @@ services:
       - home-server-network
       - common-network
 
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:stable
+    container_name: frigate
+    restart: unless-stopped
+    shm_size: "256mb"
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128 # N100 iGPU: VAAPI decode + OpenVINO detect
+    environment:
+      TZ: Europe/Paris
+      FRIGATE_RTSP_PASSWORD: ${FRIGATE_RTSP_PASSWORD}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /volume1/docker/home-server/frigate/config:/config
+      - /volume2/NAS-STORAGE/frigate:/media/frigate
+    tmpfs:
+      - /tmp/cache:size=1000000000   # keeps clip churn off the SSD
+    ports: ["8971:8971"]
+    networks:
+      - home-server-network
+
 networks:
   home-server-network:
     enable_ipv6: true
@@ -102,7 +126,9 @@ networks:
       driver: default
       config:
         - subnet: 172.16.238.0/24
-        - subnet: "2001:db8:1:2::/80" # This is an internal network, it stays as is.
+        # ULA (RFC 4193), not the 2001:db8::/32 documentation prefix.
+        # Internal container-to-container only; never routed off the host.
+        - subnet: "fd7c:9e4a:1b3f:1::/64"
 
   macvlan_net:
     driver: macvlan
@@ -110,9 +136,14 @@ networks:
       parent: bridge0
     ipam:
       config:
-        - subnet: "2a01:cb0c:9da:3e00::/64" # <-- CORRECTED to your network
+        # No IPv6 here on purpose: the ISP prefix is dynamic, so hardcoding it
+        # breaks on every rotation. (The old entry was inert anyway - enable_ipv6
+        # was never set on this network, so Docker never applied it.)
         - subnet: 192.168.1.0/24
           gateway: 192.168.1.1
+          # Pin IPAM away from the router's DHCP pool so Docker can never hand a
+          # container an address that collides with a DHCP lease.
+          ip_range: 192.168.1.96/28
 
   common-network:
     external: true

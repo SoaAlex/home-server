@@ -1,0 +1,16 @@
+[Unit]
+Description=macvlan shim (lets the NAS reach macvlan containers, e.g. Pi-Hole)
+# The script lives on /volume1, so refuse to run before that volume is mounted.
+RequiresMountsFor=/volume1/docker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# The shim is state, not a process: keep the unit "active" once it has run so
+# `systemctl status` reflects whether the shim should exist.
+RemainAfterExit=yes
+ExecStart=/volume1/docker/home-server/scripts/macvlan-shim.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -46,6 +46,18 @@ qbittorrent/qBittorrent/qBittorrent-data.conf
 # Common postgres volume (managed by docker)
 common/postgres-data/
 
+# Minecraft Server
+minecraft/modpacks
+minecraft/data
+
+# Frigate — the old `/frigate/config/` was root-anchored and never matched anything.
+# Whitelist: ignore the whole config dir, keep only the hand-written config.
+# Uses `/*` (contents) not `/` (the dir itself), otherwise the negation can't re-include.
+# Everything else there is runtime state or secrets: frigate.db{,-shm,-wal}, backup.db,
+# .jwt_secret, .exports, .timeline, .vacuum, model_cache/, go2rtc_homekit.yml (pairing keys).
+home-server/frigate/config/*
+!home-server/frigate/config/config.yaml
+
 # General
 *.log
 *.sqlite3
@@ -53,9 +65,5 @@ common/postgres-data/
 *.sqlite3-wal
 *.miss
 tmp/
-
-# Minecraft Server
-minecraft/modpacks
-minecraft/data
 
 teslamate-backup.sql
