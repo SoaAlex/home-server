@@ -10,8 +10,11 @@ docker/
 ├── common/              Shared infrastructure (PostgreSQL)
 ├── home-server/         Core services (reverse proxy, DNS, VPN, passwords, streaming)
 ├── teslamate/           Tesla vehicle tracking & Grafana dashboards
-└── qbittorrent/         Torrent client
+├── minecraft/           Minecraft server (CurseForge modpack)
+└── qbittorrent/         Torrent client (managed by the UGOS app, not compose)
 ```
+
+To rebuild everything after an OS reset or NAS swap, follow **[REBUILD.md](REBUILD.md)**.
 
 ### Networking
 
@@ -19,7 +22,15 @@ docker/
 |---------|------|---------|
 | `common-network` | bridge | Shared DB access across stacks |
 | `home-server-network` | bridge (IPv4+IPv6) | Internal service communication |
-| `macvlan_net` | macvlan (`bridge0`) | LAN-visible containers (Pi-hole `192.168.1.100`, WireGuard `192.168.1.105`) |
+| `macvlan_net` | macvlan (`bridge0`) | LAN-visible containers (Pi-hole `192.168.1.100`) |
+
+A macvlan child cannot reach its parent's own IP stack, and `bridge0` is also the NAS's
+LAN interface (`192.168.1.55`). Two consequences:
+
+- WireGuard runs in **host** network mode, not macvlan — on macvlan the VPN could reach
+  the entire LAN *except* the NAS itself.
+- A macvlan shim (`192.168.1.56`) is required for the NAS to reach Pi-hole. Installed as
+  a systemd unit — see [REBUILD.md](REBUILD.md).
 
 ## Stacks
 
@@ -36,8 +47,9 @@ docker/
 | Nginx Proxy Manager | `jc21/nginx-proxy-manager` | 80, 81, 443 | Reverse proxy + SSL |
 | Pi-hole | `pihole/pihole` | 8080 (web) | DNS ad-blocking, macvlan `192.168.1.100` |
 | Vaultwarden | `vaultwarden/server` | 83, 3012 | Bitwarden-compatible password manager |
-| WireGuard | `linuxserver/wireguard` | 51820/udp | VPN, macvlan `192.168.1.105` |
+| WireGuard | `linuxserver/wireguard` | 51820/udp | VPN, **host** network mode |
 | AIOStreams | `viren070/aiostreams` | 1080 | Stremio addon aggregator |
+| Frigate | `blakeblackshear/frigate` | 8971 | NVR; needs `/dev/dri/renderD128` |
 
 ### TeslaMate (`teslamate/`)
 
@@ -68,8 +80,8 @@ Secrets are stored in `.env` files (git-ignored). Each stack has its own:
 | File | Variables |
 |------|-----------|
 | `common/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
-| `home-server/.env` | `PIHOLE_WEBPASSWORD` |
-| `home-server/aiostreams/.env` | AIOStreams-specific config |
+| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD` |
+| `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI` |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
 
 Create from templates:
