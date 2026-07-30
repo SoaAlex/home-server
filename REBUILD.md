@@ -170,11 +170,35 @@ None of this lives on the NAS.
 | LAN DNS | `192.168.1.100` (Pi-hole) | |
 | DNS provider | Cloudflare — DNS, DDNS, CDN, WAF | `vpn.soaalex.com` must resolve to the WAN IP |
 
-**On protecting `.100` / `.56`.** This router has no DHCP exclusion ranges. Either narrow
-the pool bounds (e.g. start it at `.128`, which most routers allow even without
-exclusions), or add per-MAC reservations. Reservations only hold if the MACs are pinned —
-Docker regenerates the macvlan MAC whenever the network is recreated, and `ip link add`
-regenerates the shim's on every boot. Unpinned, the reservation silently stops matching.
+### Static DHCP leases (Livebox → "Baux DHCP statiques")
+
+| IP | MAC | What |
+|---|---|---|
+| `192.168.1.55` | `6C:1F:F7:8D:4A:5C` | NAS (`bridge0`) — **required**; see warning below |
+
+**The NAS holds `.55` by DHCP lease, not static config.** `dhclient` runs on `bridge0`,
+so this reservation is the only thing keeping the address. Losing it moves the NAS and
+breaks the WireGuard port forward plus all five NPM proxy targets at once. Do not
+narrow the DHCP pool below `.55` unless the NAS is first given a static IP in the UGOS
+network settings.
+
+Do **not** re-add a lease for `192.168.1.105` — that was WireGuard on macvlan; it now
+runs in host mode and answers on `.55`.
+
+### `.100` and `.56` are deliberately unreserved
+
+The Livebox's reservation form only offers devices from its **dynamic** lease list.
+Pi-hole and the shim set their addresses locally and never request a lease, so the router
+has never seen them and cannot offer them. The pinned MACs (`02:42:C0:A8:01:64` and
+`02:42:C0:A8:01:38`, in `docker-compose.yaml` and `macvlan-shim.sh`) exist so that
+identity stays stable across recreates and reboots — Docker 29.x and `ip link add` both
+randomise otherwise — but no reservation currently backs them.
+
+Accepted risk: if the Livebox ever leases `.100` to a new device, LAN-wide DNS fails.
+Low probability — 14 dynamic leases currently sit in `.11`–`.32`, and Pi-hole answers ARP
+continuously — and the failure is immediate and obvious. To eliminate it: give the NAS a
+static IP in UGOS, then shrink the DHCP pool to `.10`–`.49`, putting `.53`, `.55`, `.56`
+and `.100` permanently out of range.
 
 The `ip_range: 192.168.1.96/28` on `macvlan_net` is a safety net for *future*
 auto-assigned containers. It is inert while Pi-hole is the only macvlan service, since it

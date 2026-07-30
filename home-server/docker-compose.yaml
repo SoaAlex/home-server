@@ -25,6 +25,11 @@ services:
     networks:
       macvlan_net:
         ipv4_address: 192.168.1.100
+        # Pinned so the router's static DHCP lease keeps matching. Docker 29.x
+        # randomises macvlan MACs on every network recreate; unpinned, the
+        # reservation silently stops matching and .100 can be leased away.
+        # Follows Docker's old scheme: 02:42 + IP in hex (0x64 = 100).
+        mac_address: 02:42:c0:a8:01:64
     security_opt:
       - no-new-privileges:false
     restart: unless-stopped
