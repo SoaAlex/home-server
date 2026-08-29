@@ -1,7 +1,7 @@
 # Pi-hole configuration file (v6.6.2)
 # Encoding: UTF-8
 # This file is managed by pihole-FTL
-# Last updated on 2026-07-25 13:10:48 CEST
+# Last updated on 2026-07-31 10:15:02 CEST
 
 [dns]
   # Upstream DNS Servers to be used by Pi-hole. If this is not set, Pi-hole will not
@@ -1399,7 +1399,7 @@
   #
   # Allowed values are:
   #     true or false
-  etc_dnsmasq_d = false
+  etc_dnsmasq_d = true ### CHANGED, default = false
 
   # Additional lines to inject into the generated dnsmasq configuration.
   # Warning: This is an advanced setting and should only be used with care. Incorrectly
@@ -1730,8 +1730,8 @@
   all = false
 
 # Configuration statistics:
-# 166 total entries out of which 159 entries are default
-# --> 7 entries are modified
+# 166 total entries out of which 158 entries are default
+# --> 8 entries are modified
 # 2 entries are forced through environment:
 #   - dns.listeningMode
 #   - webserver.port

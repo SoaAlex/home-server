@@ -1,6 +1,101 @@
-
+# The teslamate stack's mosquitto (host port 1883, no auth). Enables the
+# Frigate Home Assistant integration and runtime toggles like
+# frigate/cam_pt2/enabled/set used by the privacy switch.
 mqtt:
-  enabled: False
+  enabled: true
+  host: 192.168.1.55
+  port: 1883
+  client_id: frigate
 
-cameras: {}  # No cameras defined, UI wizard should be used
+# ---------------------------------------------------------------------------
+# Detection: OpenVINO on the N100 iGPU (/dev/dri/renderD128, passed in compose).
+# The bundled ssdlite_mobilenet_v2 needs no download and runs at ~10ms/inference
+# on this GPU - plenty for one camera at 5 detect fps.
+# ---------------------------------------------------------------------------
+detectors:
+  ov:
+    type: openvino
+    device: GPU
+
+model:
+  width: 300
+  height: 300
+  input_tensor: nhwc
+  input_pixel_format: bgr
+  path: /openvino-model/ssdlite_mobilenet_v2.xml
+  labelmap_path: /openvino-model/coco_91cl_bkgr.txt
+
+# ---------------------------------------------------------------------------
+# go2rtc restream: one RTSP connection to the camera, fanned out to detect,
+# record and the live view. The CAM-PT2 exposes a single 1080p20 stream
+# (ONVIF advertises a 640x360 Profile_1, but its RTSP server only serves
+# /av_stream/ch0 - every other path answers 454).
+#
+# The camera's audio is G.711 A-law, which no browser can play over WebRTC,
+# so a second source transcodes it to opus for the live view only. Recordings
+# take the A-law track directly and re-encode it to AAC (see the camera input).
+# ---------------------------------------------------------------------------
+go2rtc:
+  streams:
+    cam_pt2:
+      - rtsp://soaalex:{FRIGATE_RTSP_PASSWORD}@192.168.1.29:554/av_stream/ch0#backchannel=0
+      - ffmpeg:cam_pt2#audio=opus
+
+ffmpeg:
+  hwaccel_args: preset-vaapi
+
+detect:
+  enabled: true
+  fps: 5
+
+# Nothing is kept beyond 14 days. Every retention window is capped at the same
+# value so there is no path by which a segment outlives two weeks.
+record:
+  enabled: true
+  continuous:
+    days: 14
+  motion:
+    days: 14
+  alerts:
+    retain:
+      days: 14
+      mode: motion
+  detections:
+    retain:
+      days: 14
+      mode: motion
+
+snapshots:
+  enabled: true
+  bounding_box: true
+  retain:
+    default: 14
+
+objects:
+  track:
+    - person
+    - cat
+    - dog
+
+cameras:
+  cam_pt2:
+    ffmpeg:
+      inputs:
+        # Pull the camera's original G.711 audio, not the opus track above -
+        # naming the codec explicitly stops go2rtc spinning up the transcoder
+        # for a stream that ffmpeg re-encodes to AAC on the way into the mp4.
+        - path: rtsp://127.0.0.1:8554/cam_pt2?video=h264&audio=pcma
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    live:
+      streams:
+        Main: cam_pt2
+    onvif:
+      host: 192.168.1.29
+      port: 80
+      user: soaalex
+      password: "{FRIGATE_RTSP_PASSWORD}"
+
 version: 0.17-0

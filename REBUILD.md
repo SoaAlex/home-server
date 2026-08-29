@@ -127,6 +127,33 @@ nslookup github.com 192.168.1.100
 
 ---
 
+## 5b. SSH TCP forwarding (VS Code Remote-SSH)
+
+UGOS **rewrites `/etc/ssh/sshd_config` on every boot** and forces `AllowTcpForwarding no`
+(line 87). Plain SSH still works, so this looks fine from the CLI — but VS Code
+Remote-SSH uses dynamic forwarding (`ssh -D`) to reach its server and fails with
+*"Failed to set up dynamic port forwarding connection over SSH to the VS Code Server"*
+after every reboot.
+
+Don't edit `sshd_config` — it gets overwritten. Use a drop-in instead: `Include` sits at
+line 12, and OpenSSH takes the **first** value found for a keyword, so the drop-in beats
+line 87.
+
+```bash
+printf 'AllowTcpForwarding local\n' | sudo tee /etc/ssh/sshd_config.d/00-tcp-forwarding.conf
+sudo chmod 644 /etc/ssh/sshd_config.d/00-tcp-forwarding.conf
+sudo sshd -t && sudo systemctl reload ssh
+sudo sshd -T | grep -i allowtcpforwarding   # expect: allowtcpforwarding local
+```
+
+`local` rather than `yes` permits `-L` and `-D` while still refusing remote (`-R`)
+forwarding.
+
+If UGOS ever starts wiping unknown files in `sshd_config.d/` too, this needs a systemd
+unit that reasserts the drop-in and reloads `ssh.service`, same pattern as §5.
+
+---
+
 ## 6. Bring up the stacks
 
 **Order matters.** `common-network` is declared `external: true` by `home-server` and
