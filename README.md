@@ -50,6 +50,7 @@ LAN interface (`192.168.1.55`). Two consequences:
 | WireGuard | `linuxserver/wireguard` | 51820/udp | VPN, **host** network mode |
 | AIOStreams | `viren070/aiostreams` | 1080 | Stremio addon aggregator |
 | Frigate | `blakeblackshear/frigate` | 8971 | NVR; needs `/dev/dri/renderD128` |
+| PTZ preset | `python:3.12-alpine` | 8095 | Named CAM-PT2 positions for Home Assistant |
 
 ### TeslaMate (`teslamate/`)
 
@@ -80,7 +81,7 @@ Secrets are stored in `.env` files (git-ignored). Each stack has its own:
 | File | Variables |
 |------|-----------|
 | `common/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
-| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD` |
+| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `PTZ_CAMERA_USER`, `PTZ_API_TOKEN` |
 | `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI` |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
 

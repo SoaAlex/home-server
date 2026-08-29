@@ -123,6 +123,30 @@ services:
     networks:
       - home-server-network
 
+  # Named PTZ positions for the CAM-PT2. The camera's ONVIF preset store is a
+  # no-op and the eWeLink presets live in SONOFF's cloud, so positions are kept
+  # as coordinates here and replayed with AbsoluteMove. Exists because ONVIF
+  # WS-Security digest needs a per-request nonce, which Home Assistant's
+  # rest_command cannot produce on its own.
+  ptz-preset:
+    image: python:3.12-alpine
+    container_name: ptz-preset
+    restart: unless-stopped
+    command: python /app/ptz_preset.py
+    environment:
+      PTZ_HOST: 192.168.1.29
+      PTZ_USER: ${PTZ_CAMERA_USER}
+      PTZ_PASSWORD: ${FRIGATE_RTSP_PASSWORD}
+      PTZ_TOKEN: ${PTZ_API_TOKEN}
+      PTZ_STATE_FILE: /data/presets.json
+      TZ: Europe/Paris
+    volumes:
+      - /volume1/docker/home-server/ptz-preset/ptz_preset.py:/app/ptz_preset.py:ro
+      - /volume1/docker/home-server/ptz-preset/data:/data
+    ports: ["8095:8095"]
+    networks:
+      - home-server-network
+
 networks:
   home-server-network:
     enable_ipv6: true

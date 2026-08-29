@@ -1,0 +1,148 @@
+# Home Assistant config for the CAM-PT2 privacy switch.
+#
+# PRIVACY = Frigate stops pulling the stream, then the lens tilts fully into
+#           the base (verified blind: the frame is black).
+# WIDE    = lens returns to the wide position, then Frigate resumes.
+# The ordering means recordings never contain the tilt-down/tilt-up motion.
+#
+# Source of truth for "privacy wanted" is Frigate's enabled state (retained
+# MQTT topic), NOT the camera position. The camera repositions itself - the
+# eWeLink sleep dance tilts down then back up - so position is telemetry only,
+# and an enforcer automation re-tilts whenever the lens is up while privacy is
+# wanted.
+#
+# Prerequisites in HA:
+#   - MQTT integration -> broker 192.168.1.55, port 1883, no auth
+#   - optional: Frigate integration (HACS) + Frigate card
+#   - optional: google_assistant_sdk (already used for the lamp switches) to
+#     also trigger the camera's own eWeLink sleep mode for device-level off
+#     (stops the mic and any SD-card recording, which Frigate-off does not).
+
+# --- secrets.yaml -----------------------------------------------------------
+# ptz_token: HnWiEl20FkxDokjPGxsuE9nC9nkHzTQF9echBLiCgag
+
+# --- configuration.yaml -----------------------------------------------------
+rest_command:
+  cam_pt2_preset:
+    # wait = seconds the service keeps re-sending the move until the camera
+    # arrives. A camera waking from eWeLink sleep ignores moves until its
+    # motors unlock, so turn_off passes wait: 30 to ride out the wake.
+    url: "http://192.168.1.55:8095/preset/{{ preset }}?wait={{ wait | default(6) }}"
+    method: post
+    headers:
+      X-Auth-Token: !secret ptz_token
+    timeout: 60
+
+sensor:
+  - platform: rest
+    name: "CAM-PT2 position"
+    unique_id: cam_pt2_position
+    resource: "http://192.168.1.55:8095/status"
+    headers:
+      X-Auth-Token: !secret ptz_token
+    value_template: "{{ value_json.preset if value_json.preset else 'unknown' }}"
+    json_attributes:
+      - pan
+      - tilt
+      - moving
+      # true/false from Frigate's HTTP API via the ptz service - the state
+      # channel for the privacy switch. MQTT is commands-only: HA 2026.7.x
+      # inbound MQTT proved unreliable (entities went deaf after reconnects).
+      - frigate_enabled
+    scan_interval: 30
+
+template:
+  - switch:
+      - name: "Camera privacy"
+        unique_id: cam_pt2_privacy
+        # Privacy is ON when Frigate is disabled - not when the lens happens
+        # to be down. The camera can move itself; Frigate's state only changes
+        # when commanded.
+        state: "{{ state_attr('sensor.cam_pt2_position', 'frigate_enabled') == false }}"
+        icon: >-
+          {{ 'mdi:eye-off'
+             if state_attr('sensor.cam_pt2_position', 'frigate_enabled') == false
+             else 'mdi:eye' }}
+        turn_on:
+          # Order is load-bearing. Frigate off -> the move is never recorded.
+          # Tilt BEFORE sleep -> once asleep the camera silently ignores all
+          # movement commands (verified), so tilting after would be too late.
+          # Sleep then parks the lens even deeper (-101, beyond ONVIF range)
+          # and kills RTSP + mic at device level.
+          - action: mqtt.publish
+            data:
+              topic: frigate/cam_pt2/enabled/set
+              payload: "OFF"
+          - action: rest_command.cam_pt2_preset
+            data:
+              preset: PRIVACY
+          - action: google_assistant_sdk.send_text_command
+            data:
+              command: "Ferme la caméra"
+          - action: homeassistant.update_entity
+            target:
+              entity_id: sensor.cam_pt2_position
+        turn_off:
+          # Wake first (restores RTSP and unlocks the motors), give it a few
+          # seconds, then reposition, then resume Frigate on the wide view.
+          - action: google_assistant_sdk.send_text_command
+            data:
+              command: "Ouvre la caméra"
+          - delay: "00:00:05"
+          - action: rest_command.cam_pt2_preset
+            data:
+              preset: WIDE
+              wait: 30
+          - action: mqtt.publish
+            data:
+              topic: frigate/cam_pt2/enabled/set
+              payload: "ON"
+          - action: homeassistant.update_entity
+            target:
+              entity_id: sensor.cam_pt2_position
+
+# --- automations.yaml (or create via the UI) --------------------------------
+# The enforcer: whenever privacy is wanted but the lens is up, push it down.
+# Condition is on the tilt ANGLE, not the preset name: sleep parks at -101
+# (deeper than PRIVACY's -78.75, matches no preset) and must not be "fixed".
+# Anything at or below -70 counts as hidden. Moves sent while the camera is
+# asleep are ignored by the firmware - the retry is harmless and succeeds as
+# soon as the camera wakes.
+#
+# - id: cam_pt2_privacy_enforcer
+#   alias: "Camera privacy - re-assert tilt"
+#   triggers:
+#     - trigger: state
+#       entity_id: sensor.cam_pt2_position
+#       for: "00:00:20"
+#     - trigger: time_pattern
+#       minutes: "/5"
+#   conditions:
+#     - condition: template
+#       value_template: >-
+#         {{ state_attr('sensor.cam_pt2_position', 'frigate_enabled') == false }}
+#     - condition: template
+#       value_template: >-
+#         {{ states('sensor.cam_pt2_position') != 'unavailable'
+#            and (state_attr('sensor.cam_pt2_position', 'tilt')
+#                 | float(-999)) > -70 }}
+#   actions:
+#     - action: rest_command.cam_pt2_preset
+#       data:
+#         preset: PRIVACY
+#     - action: homeassistant.update_entity
+#       target:
+#         entity_id: sensor.cam_pt2_position
+#   mode: single
+
+# --- Exposing to Google Home ------------------------------------------------
+# Expose switch.camera_privacy (Nabu Casa: Settings -> Voice assistants ->
+# Google Assistant; self-hosted: google_assistant entity_config).
+# Google Home app -> Household Routines:
+#   "When everyone leaves home" -> turn ON  Camera privacy
+#   "When someone comes home"   -> turn OFF Camera privacy
+#
+# Note on eWeLink: private mode is not externally controllable (app -> SONOFF
+# cloud -> camera; absent from the public API; SonoffLAN unsupported). The
+# google_assistant_sdk text command is the one indirect path, since the
+# eWeLink-Google link accepts "close/open camera" style phrases.

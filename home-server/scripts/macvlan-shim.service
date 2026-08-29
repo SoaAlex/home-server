@@ -1,7 +1,10 @@
 [Unit]
 Description=macvlan shim (lets the NAS reach macvlan containers, e.g. Pi-Hole)
-# The script lives on /volume1, so refuse to run before that volume is mounted.
-RequiresMountsFor=/volume1/docker
+# Deliberately no RequiresMountsFor=/volume1: UGOS mounts that volume from its own
+# script rather than fstab, so systemd synthesises volume1.mount only after the fact and
+# there is nothing to order against at boot. The earlier version ran ExecStart from
+# /volume1 and failed with 203/EXEC on every reboot. The script is installed to
+# /usr/local/bin (root filesystem) instead, so no mount dependency exists.
 After=network-online.target
 Wants=network-online.target
 
@@ -10,7 +13,7 @@ Type=oneshot
 # The shim is state, not a process: keep the unit "active" once it has run so
 # `systemctl status` reflects whether the shim should exist.
 RemainAfterExit=yes
-ExecStart=/volume1/docker/home-server/scripts/macvlan-shim.sh
+ExecStart=/usr/local/bin/macvlan-shim.sh
 
 [Install]
 WantedBy=multi-user.target

@@ -11,9 +11,10 @@
 #
 # Needed so VPN clients (and the NAS itself) can use Pi-Hole for DNS.
 #
-# Run as root at boot:
-#   DSM > Control Panel > Task Scheduler > Create > Triggered Task > User-defined script
-#   Event: Boot-up   User: root   Command: /volume1/docker/home-server/scripts/macvlan-shim.sh
+# Installed to /usr/local/bin and run at boot by macvlan-shim.service. It must live on
+# the root filesystem, NOT /volume1: UGOS mounts /volume1 from its own script rather than
+# fstab, so systemd only synthesises volume1.mount after the fact and RequiresMountsFor=
+# has nothing to order against. Running from /volume1 fails at boot with 203/EXEC.
 set -eu
 
 SHIM_IF=ph-shim
