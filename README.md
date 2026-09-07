@@ -47,6 +47,7 @@ LAN interface (`192.168.1.55`). Two consequences:
 | Nginx Proxy Manager | `jc21/nginx-proxy-manager` | 80, 81, 443 | Reverse proxy + SSL |
 | Pi-hole | `pihole/pihole` | 8080 (web) | DNS ad-blocking, macvlan `192.168.1.100` |
 | Vaultwarden | `vaultwarden/server` | 83, 3012 | Bitwarden-compatible password manager |
+| Code Server | `linuxserver/code-server` | 8443 | VS Code for `soaalex`; LAN/VPN access |
 | WireGuard | `linuxserver/wireguard` | 51820/udp | VPN, **host** network mode |
 | AIOStreams | `viren070/aiostreams` | 1080 | Stremio addon aggregator |
 | Frigate | `blakeblackshear/frigate` | 8971 | NVR; needs `/dev/dri/renderD128` |
@@ -81,7 +82,7 @@ Secrets are stored in `.env` files (git-ignored). Each stack has its own:
 | File | Variables |
 |------|-----------|
 | `common/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
-| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `PTZ_CAMERA_USER`, `PTZ_API_TOKEN` |
+| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `CODE_SERVER_PASSWORD`, `PTZ_CAMERA_USER`, `PTZ_API_TOKEN` |
 | `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI` |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
 

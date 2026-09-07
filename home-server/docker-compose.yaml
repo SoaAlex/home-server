@@ -62,6 +62,25 @@ services:
     networks:
       - home-server-network
 
+  code-server:
+    image: lscr.io/linuxserver/code-server:latest
+    container_name: code-server
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 10
+      TZ: Europe/Paris
+      PASSWORD: ${CODE_SERVER_PASSWORD}
+      DEFAULT_WORKSPACE: /volume1/docker
+    volumes:
+      - /volume1/docker/home-server/code-server/config:/config
+      - /volume1:/volume1
+      - /volume2:/volume2
+    ports:
+      - '8443:8443'
+    networks:
+      - home-server-network
+
   wireguard:
     image: lscr.io/linuxserver/wireguard:latest
     container_name: wireguard
