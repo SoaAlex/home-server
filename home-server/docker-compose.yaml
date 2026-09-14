@@ -25,11 +25,15 @@ services:
     networks:
       macvlan_net:
         ipv4_address: 192.168.1.100
+        ipv6_address: fd7c:9e4a:1b3f:2::100
         # Pinned so the router's static DHCP lease keeps matching. Docker 29.x
         # randomises macvlan MACs on every network recreate; unpinned, the
         # reservation silently stops matching and .100 can be leased away.
         # Follows Docker's old scheme: 02:42 + IP in hex (0x64 = 100).
         mac_address: 02:42:c0:a8:01:64
+    sysctls:
+      - net.ipv6.conf.all.accept_ra=2
+      - net.ipv6.conf.default.accept_ra=2
     security_opt:
       - no-new-privileges:false
     restart: unless-stopped
@@ -179,19 +183,22 @@ networks:
         - subnet: "fd7c:9e4a:1b3f:1::/64"
 
   macvlan_net:
+    enable_ipv6: true
     driver: macvlan
     driver_opts:
       parent: bridge0
     ipam:
       config:
-        # No IPv6 here on purpose: the ISP prefix is dynamic, so hardcoding it
-        # breaks on every rotation. (The old entry was inert anyway - enable_ipv6
-        # was never set on this network, so Docker never applied it.)
         - subnet: 192.168.1.0/24
           gateway: 192.168.1.1
           # Pin IPAM away from the router's DHCP pool so Docker can never hand a
           # container an address that collides with a DHCP lease.
           ip_range: 192.168.1.96/28
+        # ULA subnet for macvlan: assigns a static IPv6 address to Pi-hole without
+        # hardcoding the dynamic ISP prefix. SLAAC (accept_ra=2) dynamically
+        # configures the ISP GUA prefix and default route.
+        # No gateway is specified here so Docker does not inject a dummy default route.
+        - subnet: "fd7c:9e4a:1b3f:2::/64"
 
   common-network:
     external: true

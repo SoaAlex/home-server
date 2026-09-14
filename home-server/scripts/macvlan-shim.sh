@@ -21,10 +21,11 @@ SHIM_IF=ph-shim
 SHIM_IP=192.168.1.56   # must be free AND outside the router's DHCP pool
 # Pinned MAC: `ip link add` generates a random one each boot, which would break
 # the router's static DHCP lease for SHIM_IP. 02:42 + IP in hex (0x38 = 56);
-# the 02 prefix marks it locally-administered, so it can't collide with a vendor OUI.
 SHIM_MAC=02:42:c0:a8:01:38
 PARENT=bridge0
 TARGETS="192.168.1.100"   # Pi-Hole; add more macvlan container IPs as needed
+SHIM_IP6=fd7c:9e4a:1b3f:2::56
+TARGETS_V6="fd7c:9e4a:1b3f:2::100"
 
 # A Boot-up trigger can fire before bridge0 exists, which would abort under
 # `set -e`. Wait up to 60s for the parent rather than failing the boot task.
@@ -44,6 +45,7 @@ ip link set dev "$SHIM_IF" down
 ip link set dev "$SHIM_IF" address "$SHIM_MAC"
 
 ip addr replace "$SHIM_IP/32" dev "$SHIM_IF"
+ip -6 addr replace "$SHIM_IP6/64" dev "$SHIM_IF"
 ip link set "$SHIM_IF" up
 
 # /32 routes beat the kernel's 192.168.1.0/24-via-bridge0 route by longest-prefix
@@ -52,4 +54,8 @@ for t in $TARGETS; do
   ip route replace "$t/32" dev "$SHIM_IF"
 done
 
-echo "shim up: $SHIM_IF ($SHIM_IP) -> $TARGETS"
+for t in $TARGETS_V6; do
+  ip -6 route replace "$t/128" dev "$SHIM_IF"
+done
+
+echo "shim up: $SHIM_IF ($SHIM_IP, $SHIM_IP6) -> $TARGETS, $TARGETS_V6"
