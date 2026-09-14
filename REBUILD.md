@@ -121,7 +121,8 @@ dependency and will silently no-op if it fires too early.
 Verify:
 
 ```bash
-ip route get 192.168.1.100      # expect: dev ph-shim src 192.168.1.56
+ip route get 192.168.1.100            # expect: dev ph-shim src 192.168.1.56
+ip -6 route get fd7c:9e4a:1b3f:2::100  # expect: dev ph-shim src fd7c:9e4a:1b3f:2::56
 nslookup github.com 192.168.1.100
 ```
 
@@ -282,7 +283,7 @@ new hardware.
 |---|---|---|---|
 | `common-network` | bridge | auto | shared DB access; created by `common/` |
 | `home-server-network` | bridge + IPv6 | `172.16.238.0/24`, `fd7c:9e4a:1b3f:1::/64` | ULA is internal-only, never routed |
-| `macvlan_net` | macvlan on `bridge0` | `192.168.1.0/24`, `ip_range` `.96/28` | Pi-hole `.100` |
+| `macvlan_net` | macvlan on `bridge0` + IPv6 | `192.168.1.0/24`, `fd7c:9e4a:1b3f:2::/64` | Pi-hole `.100` / ULA `...:100`. Dynamic GUA via SLAAC |
 
 ### NPM proxy hosts
 
