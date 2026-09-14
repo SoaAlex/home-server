@@ -126,6 +126,29 @@ services:
       - home-server-network
       - common-network
 
+  aiometadata:
+    image: ghcr.io/cedya77/aiometadata:latest
+    container_name: aiometadata
+    init: true
+    restart: unless-stopped
+    ports:
+      - 3232:3232
+    env_file:
+      - ./aiometadata/.env
+    volumes:
+      - /volume1/docker/home-server/aiometadata/data:/app/addon/data
+    networks:
+      - home-server-network
+      - common-network
+    tty: true
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3232/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+
   frigate:
     image: ghcr.io/blakeblackshear/frigate:stable
     container_name: frigate
