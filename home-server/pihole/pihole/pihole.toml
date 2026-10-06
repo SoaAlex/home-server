@@ -1,7 +1,7 @@
 # Pi-hole configuration file (v6.6.2)
 # Encoding: UTF-8
 # This file is managed by pihole-FTL
-# Last updated on 2026-09-04 12:23:25 CEST
+# Last updated on 2026-10-02 09:18:05 CEST
 
 [dns]
   # Upstream DNS Servers to be used by Pi-hole. If this is not set, Pi-hole will not
@@ -542,7 +542,7 @@
     #
     # Allowed values are:
     #     A positive integer value
-    count = 1000
+    count = 5000 ### CHANGED, default = 1000
 
     # ... in the set interval before rate-limiting?
     #
@@ -1732,8 +1732,8 @@
   all = false
 
 # Configuration statistics:
-# 166 total entries out of which 158 entries are default
-# --> 8 entries are modified
+# 166 total entries out of which 157 entries are default
+# --> 9 entries are modified
 # 2 entries are forced through environment:
 #   - dns.listeningMode
 #   - webserver.port

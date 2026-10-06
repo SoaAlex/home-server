@@ -70,3 +70,5 @@ home-server/frigate/config/*
 tmp/
 
 teslamate-backup.sql
+
+*.cache
