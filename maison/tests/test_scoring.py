@@ -52,6 +52,11 @@ def test_cubic_and_long_garden_penalised():
     assert s2 == s1 - 7
 
 
+def test_viager_excluded():
+    assert score_listing({**BASE, "title": "Vente à terme occupée sur 180 mois"}, CRIT)[2] == "viager / vente à terme"
+    assert score_listing({**BASE, "description": "Viager occupé, bouquet de 50 000 €"}, CRIT)[2] == "viager / vente à terme"
+
+
 def test_sold_excluded():
     assert score_listing({**BASE, "raw": {"sale_status": "Vendu"}}, CRIT)[2] == "vendu"
     assert score_listing({**BASE, "raw": {"sale_status": "Sous Offre"}}, CRIT)[2] is None

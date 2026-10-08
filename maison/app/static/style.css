@@ -66,7 +66,7 @@ main.maponly #list { display: none; }
 [data-theme="dark"] .leaflet-tile { filter: brightness(.75) contrast(1.1) saturate(.8); }
 
 /* ---------- cartes annonces ---------- */
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; align-content: start; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); grid-auto-rows: max-content; gap: 18px; align-content: start; }
 .card { background: var(--panel); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow);
         border: 1px solid var(--border); cursor: pointer; transition: transform .15s, box-shadow .15s, border-color .15s; display: flex; flex-direction: column; }
 .card:hover { transform: translateY(-2px); box-shadow: 0 10px 28px #00000024; border-color: var(--accent); }
@@ -150,6 +150,8 @@ main.maponly #list { display: none; }
 .mk { display: grid; place-items: center; width: 34px; height: 24px; border-radius: 8px; color: #fff; font-weight: 800; font-size: 12px; border: 2px solid #fff; box-shadow: 0 2px 6px #0005; transition: transform .15s; }
 .mk.approx { opacity: .85; border-style: dashed; }
 .mk.hl { transform: scale(1.45); }
+.dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 1px 3px #0006; transition: transform .15s; }
+.dot.hl { transform: scale(1.8); }
 .mk-work { font-size: 24px; filter: drop-shadow(0 2px 3px #0006); }
 
 @media (max-width: 1000px) {
@@ -158,6 +160,9 @@ main.maponly #list { display: none; }
   .filters.open { transform: none; }
   .only-mobile { display: inline-block; }
   .search, .count { display: none; }
+  .brand { font-size: 0; gap: 0; }
+  .tabs a { padding: 5px 10px; }
+  .sort { max-width: 120px; padding: 6px; }
   .topbar { gap: 8px; padding: 8px 10px; }
   .d-body { grid-template-columns: 1fr; }
   #list { padding: 12px; }

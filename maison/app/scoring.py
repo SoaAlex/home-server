@@ -1,4 +1,7 @@
-from app.textparse import city_key
+import re
+from app.textparse import city_key, norm
+
+VIAGER = re.compile(r"\bviager\b|vente a terme|nue[- ]propriete|\bbouquet\b")
 
 OVERRIDABLE = ("has_garage", "has_garden", "has_bathtub", "works", "property_type",
                "land_m2", "dpe", "bedrooms", "price", "surface_m2", "city")
@@ -18,6 +21,8 @@ def score_listing(row: dict, crit: dict) -> tuple[int, dict, str | None]:
     sale = ((row.get("raw") or {}).get("sale_status") or "").lower()
     if sale in ("vendu", "sous compromis"):
         return 0, {}, sale
+    if VIAGER.search(norm(f"{r.get('title') or ''} {r.get('description') or ''}")):
+        return 0, {}, "viager / vente à terme"
     ck = city_key(r.get("city"), r.get("postal_code"))
     pref = [city_key(c) for c in crit["preferred_cities"]]
     other = {city_key(c) for c in crit.get("other_cities", [])}
