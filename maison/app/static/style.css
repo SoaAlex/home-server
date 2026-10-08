@@ -161,9 +161,9 @@ main.maponly #list { display: none; }
   .only-mobile { display: inline-block; }
   .search, .count { display: none; }
   .brand { font-size: 0; gap: 0; }
-  .tabs a { padding: 5px 10px; }
-  .sort { max-width: 120px; padding: 6px; }
-  .topbar { gap: 8px; padding: 8px 10px; }
+  .sort { max-width: 96px; padding: 6px 4px; font-size: 13px; }
+  .tabs a { padding: 5px 8px; font-size: 13px; }
+  .topbar { gap: 6px; padding: 8px; }
   .d-body { grid-template-columns: 1fr; }
   #list { padding: 12px; }
 }
