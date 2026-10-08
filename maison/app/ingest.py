@@ -16,9 +16,13 @@ def upsert(conn, item: dict) -> tuple[int, bool]:
     params = {"source": item["source"], "external_id": str(item["external_id"]), **vals}
     insert_vals = ", ".join(
         "COALESCE(%(photo_urls)s::jsonb, '[]'::jsonb)" if c == "photo_urls" else f"%({c})s" for c in cols)
-    # Ne pas écraser une valeur connue par NULL (les e-mails donnent des fiches partielles)
-    updates = ", ".join(f"{c} = COALESCE(EXCLUDED.{c}, listing.{c})" for c in vals
-                        if c not in ("price", "photo_urls"))
+    # Ne pas écraser une valeur connue par NULL (les e-mails donnent des fiches partielles),
+    # ni une position exacte (adresse trouvée/validée) par la position floutée du portail.
+    keep_exact = ("lat", "lon", "geo_precision")
+    updates = ", ".join(
+        (f"{c} = CASE WHEN listing.geo_precision = 'exact' THEN listing.{c} ELSE COALESCE(EXCLUDED.{c}, listing.{c}) END"
+         if c in keep_exact else f"{c} = COALESCE(EXCLUDED.{c}, listing.{c})")
+        for c in vals if c not in ("price", "photo_urls"))
     sql = f"""
     INSERT INTO listing ({", ".join(cols)}) VALUES ({insert_vals})
     ON CONFLICT (source, external_id) DO UPDATE SET

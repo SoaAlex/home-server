@@ -25,6 +25,15 @@ def test_partial_update_keeps_known_values(dburl):
     assert row["dpe"] == "C" and row["price"] == 400000
 
 
+def test_exact_position_not_overwritten_by_blurred(dburl):
+    with db.connect(dburl) as conn:
+        lid, _ = upsert(conn, L(lat=50.0, lon=3.0, geo_precision="approx"))
+        conn.execute("UPDATE listing SET lat=50.5, lon=3.5, geo_precision='exact' WHERE id=%s", (lid,))
+        upsert(conn, L(lat=50.1, lon=3.1, geo_precision="approx"))
+        row = conn.execute("SELECT lat, lon, geo_precision FROM listing WHERE id=%s", (lid,)).fetchone()
+    assert (row["lat"], row["lon"], row["geo_precision"]) == (50.5, 3.5, "exact")
+
+
 def test_mark_gone(dburl):
     with db.connect(dburl) as conn:
         upsert(conn, L())

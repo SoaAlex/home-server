@@ -226,8 +226,16 @@ async function openDetail(id) {
       </div>
       <div class="col">
         <div class="box"><h3>Localisation</h3>
-          <div>${esc(l.address || "Adresse inconnue")}${e.address_confidence && e.address_confidence !== "none" ? ` <span class="b ${e.address_confidence === "exact" ? "yes" : "mid"}">${esc(e.address_confidence)}</span>` : ""}</div>
-          ${l.lat != null ? `<div class="minimap" id="minimap"></div>` : ""}</div>
+          <div>${esc(l.address || "Adresse inconnue")}${e.address_confidence && e.address_confidence !== "none" ? ` <span class="b ${e.address_confidence === "exact" ? "yes" : "mid"}">${e.address_method === "user" ? "✔ validée" : esc(e.address_confidence)}</span>` : ""}</div>
+          ${l.lat != null ? `<div class="minimap" id="minimap"></div>` : ""}
+          <div class="addr-actions">
+            ${e.address_request
+              ? `<span class="b mid">🔍 Investigation demandée — traitée au prochain passage de l'agent (:20)</span>`
+              : e.address_method === "user" ? "" : `<button class="btn ghost sm" data-investigate="${l.id}">🔍 Investiguer l'adresse</button>`}
+            <button class="btn ghost sm" data-fix-address="${l.id}">✏️ Corriger</button>
+          </div>
+          ${(e.address_investigations || []).slice(-2).map((h) => `<div class="muted small">Investigation du ${new Date(h.done_at).toLocaleDateString("fr-FR")} : ${esc(h.result || "rien de concluant")} ${h.confidence ? `(${esc(h.confidence)})` : ""}${h.notes ? ` — ${esc(h.notes)}` : ""}</div>`).join("")}
+        </div>
         <div class="box"><h3>Trajets voiture</h3>
           ${Object.entries(dests()).map(([k, d]) => `<div class="trip"><span>${esc(d.label)}</span><b>${c[k] ?? "?"} min</b></div>`).join("")}</div>
         <div class="box"><h3>Détail du score</h3>${bars || "<span class='muted'>—</span>"}</div>
@@ -251,6 +259,7 @@ function showPhoto(i) {
   const t = $$(".thumbs img")[state.photoIdx]; if (t) t.scrollIntoView({ block: "nearest", inline: "center" });
 }
 function closeDetail() { location.hash = state.lastRoute || "#/"; }
+function reopen(id) { state.openId = null; openDetail(id); }
 
 /* ---------- rendu ---------- */
 function render() {
@@ -287,6 +296,24 @@ document.addEventListener("click", async (ev) => {
     return;
   }
   if (ev.target.closest("[data-close]")) return closeDetail();
+  const inv = ev.target.closest("[data-investigate]");
+  if (inv) {
+    const note = prompt("Un indice pour l'agent ? (facultatif — ex. « pas la bonne maison, c'est près du parc »)", "");
+    if (note === null) return;
+    await fetch(`/api/listings/${inv.dataset.investigate}/address_request`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note }) });
+    return reopen(+inv.dataset.investigate);
+  }
+  const fix = ev.target.closest("[data-fix-address]");
+  if (fix) {
+    const address = prompt("Adresse exacte (numéro, rue, ville) :", "");
+    if (!address) return;
+    const r = await fetch(`/api/listings/${fix.dataset.fixAddress}/address`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ address }) });
+    if (!r.ok) return alert("Adresse introuvable : " + (await r.text()));
+    const upd = await r.json();
+    const l = state.all.find((x) => x.id === upd.id);
+    if (l) Object.assign(l, { address: upd.address, lat: upd.lat, lon: upd.lon, commute: upd.commute, score: upd.score, geo_precision: "exact" });
+    return reopen(upd.id);
+  }
   const nav = ev.target.closest("[data-nav]"); if (nav) return showPhoto(state.photoIdx + +nav.dataset.nav);
   const th = ev.target.closest(".thumbs img"); if (th) return showPhoto(+th.dataset.i);
   const pop = ev.target.closest("[data-open]"); if (pop) { location.hash = `#/l/${pop.dataset.open}`; return; }

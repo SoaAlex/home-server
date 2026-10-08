@@ -54,6 +54,26 @@ def test_tools_require_token(client):
     assert client.get("/api/tools/ban?q=x").status_code == 401
 
 
+def test_user_address_locks_and_request_prioritised(client, monkeypatch):
+    from app import web
+    monkeypatch.setattr(web.geo, "geocode", lambda c, q, **k: {"lat": 50.7, "lon": 3.05, "label": "218 Rue du Château Valois 59118 Wambrechies", "citycode": "59636"})
+    lst = client.get("/api/listings").json()
+    a = next(x for x in lst if x["source"] == "bienici")["id"]
+    c = next(x for x in lst if x["source"] == "leboncoin")["id"]
+    # demande d'investigation : passe en tête de la file d'attente
+    assert client.post(f"/api/listings/{c}/address_request", json={"note": "doute"}).status_code == 200
+    first = client.get("/api/enrichment/pending", headers={"X-Token": "tok"}).json()[0]
+    assert first["id"] == c and first["enrichment"]["address_request"]["note"] == "doute"
+    # correction manuelle : géocodée, exacte, verrouillée
+    r = client.post(f"/api/listings/{a}/address", json={"address": "218 rue du Château Valois Wambrechies"})
+    assert r.status_code == 200 and r.json()["address"].startswith("218 Rue du Château Valois")
+    client.post(f"/api/listings/{a}/enrichment", headers={"X-Token": "tok"},
+                json={"address": "1 rue Fausse", "lat": 1, "lon": 1, "address_confidence": "probable", "style": "modern"})
+    full = client.get(f"/api/listings/{a}").json()
+    assert full["address"].startswith("218") and full["enrichment"]["address_method"] == "user"
+    assert full["enrichment"]["style"] == "modern" and full["geo_precision"] == "exact"
+
+
 def test_user_status(client):
     lid = client.get("/api/listings").json()[0]["id"]
     assert client.post(f"/api/listings/{lid}/user", json={"user_status": "favorite"}).status_code == 200
