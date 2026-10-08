@@ -3,56 +3,86 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Maison — recherche</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=2">
+<script>document.documentElement.dataset.theme = localStorage.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");</script>
 </head>
 <body>
-<header>
-  <h1>🏡 Recherche maison</h1>
-  <nav>
-    <a href="#/" data-tab="list">Liste</a>
-    <a href="#/map" data-tab="map">Carte</a>
+<header class="topbar">
+  <button class="icon-btn only-mobile" id="btn-filters" title="Filtres">☰</button>
+  <a class="brand" href="#/"><span class="logo">⌂</span> Maison</a>
+  <nav class="tabs">
+    <a href="#/" data-route="#/">Annonces</a>
+    <a href="#/map" data-route="#/map">Carte</a>
   </nav>
-  <span id="count"></span>
+  <div class="search"><input id="f-q" type="search" placeholder="Rechercher (ville, rue, mot-clé…)"></div>
+  <span class="count" id="count"></span>
+  <select id="f-sort" class="sort" title="Tri">
+    <option value="score">Meilleur score</option><option value="new">Plus récentes</option>
+    <option value="price">Prix croissant</option><option value="ppm">Prix/m² croissant</option>
+    <option value="commute">Trajets les plus courts</option>
+  </select>
+  <button class="icon-btn" id="btn-theme" title="Thème clair/sombre">◐</button>
 </header>
 
-<aside id="filters">
-  <label>Score min <input type="range" id="f-score" min="0" max="100" value="0"><output id="o-score">0</output></label>
-  <label>Prix max <input type="number" id="f-price" step="10000" placeholder="550000"></label>
-  <label>Terrain min (m²) <input type="number" id="f-land" step="50"></label>
-  <label>Type
-    <select id="f-type"><option value="">Tous</option><option value="detached">Individuelle</option>
-      <option value="semi">Semi-individuelle</option><option value="other">Autre / inconnu</option></select>
-  </label>
-  <label>DPE max
-    <select id="f-dpe"><option value="">Tous</option><option>A</option><option>B</option><option>C</option>
-      <option>D</option><option>E</option></select>
-  </label>
-  <label>Villes <select id="f-cities" multiple size="8"></select></label>
-  <label><input type="checkbox" id="f-garage"> Garage confirmé</label>
-  <label><input type="checkbox" id="f-garden"> Jardin confirmé</label>
-  <label><input type="checkbox" id="f-bath"> Baignoire</label>
-  <label><input type="checkbox" id="f-noworks"> Sans travaux</label>
-  <label><input type="checkbox" id="f-fav"> Favoris / à visiter seulement</label>
-  <label><input type="checkbox" id="f-rejected"> Afficher les rejetées</label>
-  <label><input type="checkbox" id="f-excluded"> Afficher les exclues</label>
-  <label><input type="checkbox" id="f-dups"> Afficher les doublons</label>
-  <label>Tri
-    <select id="f-sort"><option value="score">Score</option><option value="price">Prix ↑</option>
-      <option value="ppm">Prix/m² ↑</option><option value="new">Nouveautés</option>
-      <option value="commute">Trajets ↑</option></select>
-  </label>
-  <button id="f-reset">Réinitialiser</button>
-</aside>
+<div class="layout">
+  <aside class="filters" id="filters">
+    <div class="chips" id="quick">
+      <button data-chip="garage">Garage ✓</button>
+      <button data-chip="garden">Jardin ✓</button>
+      <button data-chip="noworks">Sans travaux</button>
+      <button data-chip="bath">Baignoire</button>
+      <button data-chip="fav">★ Favoris</button>
+      <button data-chip="new">Nouveautés 48 h</button>
+    </div>
+    <section>
+      <h4>Score minimum <output id="o-score">0</output></h4>
+      <input type="range" id="f-score" min="0" max="100" step="5" value="0">
+    </section>
+    <section class="row2">
+      <label>Prix max (k€)<input type="number" id="f-price" step="10" placeholder="550"></label>
+      <label>Terrain min (m²)<input type="number" id="f-land" step="50" placeholder="0"></label>
+    </section>
+    <section>
+      <h4>Type</h4>
+      <div class="seg" id="f-type">
+        <button data-v="" class="on">Tous</button><button data-v="detached">Individuelle</button>
+        <button data-v="semi">Semi</button><button data-v="other">Autre</button>
+      </div>
+    </section>
+    <section>
+      <h4>DPE maximum</h4>
+      <div class="seg" id="f-dpe">
+        <button data-v="" class="on">—</button><button data-v="A">A</button><button data-v="B">B</button>
+        <button data-v="C">C</button><button data-v="D">D</button><button data-v="E">E</button>
+      </div>
+    </section>
+    <section>
+      <h4>Villes <button class="link" id="cities-clear">tout décocher</button></h4>
+      <div class="city-list" id="f-cities"></div>
+    </section>
+    <section class="toggles">
+      <label><input type="checkbox" id="f-rejected"> Afficher les rejetées</label>
+      <label><input type="checkbox" id="f-excluded"> Afficher les exclues</label>
+      <label><input type="checkbox" id="f-dups"> Afficher les doublons</label>
+    </section>
+    <button class="btn ghost" id="f-reset">Réinitialiser les filtres</button>
+  </aside>
 
-<main>
-  <section id="list"></section>
-  <section id="map" hidden></section>
-  <section id="detail" hidden></section>
-</main>
+  <main id="main">
+    <section id="list" class="grid"></section>
+    <section id="map"></section>
+  </main>
+</div>
+
+<div class="drawer" id="drawer" hidden>
+  <div class="drawer-backdrop" data-close></div>
+  <article class="drawer-panel" id="detail"></article>
+</div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=2"></script>
 </body>
 </html>
