@@ -1,0 +1,30 @@
+services:
+  web:
+    build: .
+    image: maison:latest
+    container_name: maison-web
+    command: uvicorn app.web:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8090:8000"
+    env_file: .env
+    volumes:
+      - ./data:/data
+      - ./config:/app/config:ro
+    networks: [common-network]
+    restart: unless-stopped
+
+  collector:
+    image: maison:latest
+    container_name: maison-collector
+    command: python -m app.collector
+    env_file: .env
+    volumes:
+      - ./data:/data
+      - ./config:/app/config:ro
+    networks: [common-network]
+    depends_on: [web]
+    restart: unless-stopped
+
+networks:
+  common-network:
+    external: true

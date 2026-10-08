@@ -1,0 +1,25 @@
+# Exemple de critères — copier en config/criteria.yaml (ignoré par git, contient des données
+# personnelles) puis lancer scripts/resolve_zones.py pour remplir `zones`.
+price:
+  target: 400000
+  max: 500000
+# Ordre = préférence (rang 0 = meilleure)
+preferred_cities:
+  - Ville A
+  - Ville B
+other_cities:
+  - Ville C
+excluded_cities:
+  - Ville D
+require:
+  garage: true
+  garden: true
+commute:
+  destinations:
+    personne1: {label: "Travail personne 1", short: "P1", lon: 3.0573, lat: 50.6292}
+    personne2: {label: "Travail personne 2", short: "P2", lon: 3.0573, lat: 50.6292}
+alert:
+  min_score: 75
+  max_price: 400000
+  require_confirmed_garage_garden: true
+zones: {}
