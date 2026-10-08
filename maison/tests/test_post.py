@@ -44,6 +44,7 @@ def test_should_alert():
     assert not alerts.should_alert(row(score=60), CRIT)
     assert not alerts.should_alert(row(price=480000), CRIT)
     assert not alerts.should_alert(row(alerted_at="2026-01-01"), CRIT)
+    assert not alerts.should_alert(row(reaction="dislike"), CRIT)
 
 
 def test_send_discord_payload():

@@ -74,7 +74,17 @@ def test_user_address_locks_and_request_prioritised(client, monkeypatch):
     assert full["enrichment"]["style"] == "modern" and full["geo_precision"] == "exact"
 
 
+def test_reaction_like_dislike(client):
+    lid = client.get("/api/listings").json()[0]["id"]
+    assert client.post(f"/api/listings/{lid}/reaction", json={"reaction": "like"}).json()["reaction"] == "like"
+    assert client.get(f"/api/listings/{lid}").json()["reaction"] == "like"
+    assert client.post(f"/api/listings/{lid}/reaction", json={"reaction": "bof"}).status_code == 400
+    client.post(f"/api/listings/{lid}/reaction", json={"reaction": "dislike"})
+    pend = client.get("/api/enrichment/pending", headers={"X-Token": "tok"}).json()
+    assert lid not in [x["id"] for x in pend]          # pas de tokens dépensés sur une maison rejetée
+
+
 def test_user_status(client):
     lid = client.get("/api/listings").json()[0]["id"]
-    assert client.post(f"/api/listings/{lid}/user", json={"user_status": "favorite"}).status_code == 200
-    assert client.get(f"/api/listings/{lid}").json()["user_status"] == "favorite"
+    assert client.post(f"/api/listings/{lid}/user", json={"user_status": "to_visit"}).status_code == 200
+    assert client.get(f"/api/listings/{lid}").json()["user_status"] == "to_visit"

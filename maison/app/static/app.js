@@ -42,8 +42,9 @@ function tri(v, label, emoji = "") {
   return `<span class="b ${cls}">${emoji} ${label} ${v === true ? "✓" : v === false ? "✕" : "?"}</span>`;
 }
 function favButtons(l) {
-  return [["favorite", "★", "Favori"], ["to_visit", "🗓", "À visiter"], ["rejected", "✕", "Rejeter"]]
-    .map(([v, t, title]) => `<button data-user="${v}" data-id="${l.id}" title="${title}" class="${l.user_status === v ? "on" : ""}">${t}</button>`).join("");
+  const react = [["like", "👍", "J'aime"], ["dislike", "👎", "Je n'aime pas (masquée)"]]
+    .map(([v, t, title]) => `<button data-reaction="${v}" data-id="${l.id}" title="${title}" class="${l.reaction === v ? "on" : ""}">${t}</button>`).join("");
+  return react + `<button data-user="to_visit" data-id="${l.id}" title="À visiter" class="${l.user_status === "to_visit" ? "on" : ""}">🗓</button>`;
 }
 
 /* ---------- données ---------- */
@@ -71,7 +72,7 @@ function filtered() {
   const q = norm($("#f-q").value);
   const maxPrice = (+$("#f-price").value || 0) * 1000 || Infinity;
   const minScore = +$("#f-score").value, minLand = +$("#f-land").value || 0;
-  const showRejected = $("#f-rejected").checked, showDups = $("#f-dups").checked;
+  const hideDisliked = $("#f-hide-disliked").checked, showDups = $("#f-dups").checked;
   const ch = state.chips;
   let out = state.all.filter((l) => {
     if ((l.score || 0) < minScore && !l.excluded_reason) return false;
@@ -85,9 +86,10 @@ function filtered() {
     if (ch.has("garden") && eff(l, "has_garden") !== true) return false;
     if (ch.has("bath") && eff(l, "has_bathtub") !== true) return false;
     if (ch.has("noworks") && eff(l, "works") !== "none") return false;
-    if (ch.has("fav") && !["favorite", "to_visit", "visited"].includes(l.user_status)) return false;
+    if (ch.has("fav") && l.reaction !== "like") return false;
+    if (ch.has("visit") && l.user_status !== "to_visit") return false;
     if (ch.has("new") && !isNew(l)) return false;
-    if (!showRejected && l.user_status === "rejected") return false;
+    if (hideDisliked && l.reaction === "dislike") return false;
     if (q && !norm([eff(l, "title"), eff(l, "city"), l.address, l.agency, l.source].join(" ")).includes(q)) return false;
     return true;
   });
@@ -120,7 +122,7 @@ function card(l) {
     l.enrichment_status === "done" ? `<span class="tag" title="Analysée par l'agent">✦ analysée</span>` : "",
   ].join("");
   const street = l.address ? " · " + esc(l.address.replace(/,?\s*\d{5}.*$/, "")) : "";
-  return `<article class="card ${l.user_status === "rejected" || l.excluded_reason ? "dim" : ""}" data-id="${l.id}">
+  return `<article class="card ${l.reaction === "dislike" || l.excluded_reason ? "dim" : ""} ${l.reaction === "like" ? "liked" : ""}" data-id="${l.id}">
     <div class="media" style="${p ? `background-image:url('${esc(p)}')` : ""}">
       ${p ? "" : `<div class="nophoto">⌂</div>`}
       <div class="score" style="--s:${s};--c:${scoreCol(s)}"><span>${l.score ?? "–"}</span></div>
@@ -285,6 +287,23 @@ function render() {
 
 /* ---------- événements ---------- */
 document.addEventListener("click", async (ev) => {
+  const rb = ev.target.closest("button[data-reaction]");
+  if (rb) {
+    ev.stopPropagation();
+    const id = +rb.dataset.id;
+    const l = state.all.find((x) => x.id === id) || {};
+    const v = l.reaction === rb.dataset.reaction ? null : rb.dataset.reaction;
+    await fetch(`/api/listings/${id}/reaction`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reaction: v }) });
+    l.reaction = v;
+    $$(`button[data-reaction][data-id="${id}"]`).forEach((x) => x.classList.toggle("on", x.dataset.reaction === v));
+    const card = $(`.card[data-id="${id}"]`);
+    if (card) {
+      card.classList.toggle("liked", v === "like");
+      card.classList.toggle("dim", v === "dislike" || !!l.excluded_reason);
+      if (v === "dislike" && $("#f-hide-disliked").checked) { card.classList.add("leaving"); setTimeout(rerender, 250); }
+    }
+    return;
+  }
   const b = ev.target.closest("button[data-user]");
   if (b) {
     ev.stopPropagation();
@@ -343,6 +362,7 @@ let qTimer; $("#f-q").addEventListener("input", () => { clearTimeout(qTimer); qT
 $("#f-sort").addEventListener("change", rerender);
 $("#f-reset").addEventListener("click", () => {
   $$("#filters input").forEach((i) => (i.type === "checkbox" ? (i.checked = false) : (i.value = i.type === "range" ? 0 : "")));
+  $("#f-hide-disliked").checked = true;
   $("#o-score").textContent = "0"; state.chips.clear(); state.cities.clear(); state.type = state.dpe = "";
   $$("#quick button").forEach((b) => b.classList.remove("on"));
   $$(".seg").forEach((s) => $$("button", s).forEach((b, i) => b.classList.toggle("on", i === 0)));

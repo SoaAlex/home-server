@@ -19,7 +19,7 @@ COLS = ("id, source, url, title, price, surface_m2, land_m2, rooms, bedrooms, pr
         "postal_code, dpe, ges, year_built, has_garage, has_garden, has_bathtub, works, agency, lat, lon, "
         "geo_precision, address, photos, photo_urls, first_seen, last_seen, published_at, status, "
         "price_history, commute, enrichment, enrichment_status, score, score_details, excluded_reason, "
-        "fingerprint, alerted_at, user_status, user_note")
+        "fingerprint, alerted_at, user_status, user_note, reaction")
 # Champs que l'agent d'enrichissement peut écrire directement dans les colonnes (liste blanche)
 DIRECT = ("address", "lat", "lon", "city", "postal_code", "description", "title", "surface_m2",
           "land_m2", "bedrooms", "rooms", "dpe", "price")
@@ -75,6 +75,17 @@ def set_user(lid: int, body: dict):
     return {"ok": True}
 
 
+@app.post("/api/listings/{lid}/reaction")
+def set_reaction(lid: int, body: dict):
+    reaction = body.get("reaction")
+    if reaction not in ("like", "dislike", None):
+        raise HTTPException(400, "reaction = like | dislike | null")
+    with db.connect() as conn:
+        if not conn.execute("UPDATE listing SET reaction=%s WHERE id=%s RETURNING id", (reaction, lid)).fetchone():
+            raise HTTPException(404)
+    return {"id": lid, "reaction": reaction}
+
+
 def _refresh(conn, lid):
     """Recalcule trajets + score après un changement de position."""
     crit = settings.load_criteria()
@@ -128,6 +139,7 @@ def pending(limit: int = 5, x_token: str = Header(None)):
         return conn.execute(
             f"SELECT {COLS}, description, raw->'blurInfo' AS blur FROM listing WHERE status='active' AND enrichment_status='pending' "
             "AND (excluded_reason IS NULL OR excluded_reason='à compléter') "
+            "AND (reaction IS DISTINCT FROM 'dislike' OR enrichment ? 'address_request') "
             "ORDER BY (enrichment ? 'address_request') DESC, score DESC NULLS LAST, first_seen DESC LIMIT %s",
             (limit,)).fetchall()
 

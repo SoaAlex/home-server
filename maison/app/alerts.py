@@ -6,7 +6,7 @@ def should_alert(row: dict, crit: dict) -> bool:
     a, r = crit["alert"], effective(row)
     if row.get("alerted_at") or row.get("excluded_reason") or (row.get("score") or 0) < a["min_score"]:
         return False
-    if row.get("status") == "gone":
+    if row.get("status") == "gone" or row.get("reaction") == "dislike":
         return False
     if (r.get("price") or 10**9) > a["max_price"]:
         return False
