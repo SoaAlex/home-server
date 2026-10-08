@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maison — recherche</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>🏡 Recherche maison</h1>
+  <nav>
+    <a href="#/" data-tab="list">Liste</a>
+    <a href="#/map" data-tab="map">Carte</a>
+  </nav>
+  <span id="count"></span>
+</header>
+
+<aside id="filters">
+  <label>Score min <input type="range" id="f-score" min="0" max="100" value="0"><output id="o-score">0</output></label>
+  <label>Prix max <input type="number" id="f-price" step="10000" placeholder="550000"></label>
+  <label>Terrain min (m²) <input type="number" id="f-land" step="50"></label>
+  <label>Type
+    <select id="f-type"><option value="">Tous</option><option value="detached">Individuelle</option>
+      <option value="semi">Semi-individuelle</option><option value="other">Autre / inconnu</option></select>
+  </label>
+  <label>DPE max
+    <select id="f-dpe"><option value="">Tous</option><option>A</option><option>B</option><option>C</option>
+      <option>D</option><option>E</option></select>
+  </label>
+  <label>Villes <select id="f-cities" multiple size="8"></select></label>
+  <label><input type="checkbox" id="f-garage"> Garage confirmé</label>
+  <label><input type="checkbox" id="f-garden"> Jardin confirmé</label>
+  <label><input type="checkbox" id="f-bath"> Baignoire</label>
+  <label><input type="checkbox" id="f-noworks"> Sans travaux</label>
+  <label><input type="checkbox" id="f-fav"> Favoris / à visiter seulement</label>
+  <label><input type="checkbox" id="f-rejected"> Afficher les rejetées</label>
+  <label><input type="checkbox" id="f-excluded"> Afficher les exclues</label>
+  <label><input type="checkbox" id="f-dups"> Afficher les doublons</label>
+  <label>Tri
+    <select id="f-sort"><option value="score">Score</option><option value="price">Prix ↑</option>
+      <option value="ppm">Prix/m² ↑</option><option value="new">Nouveautés</option>
+      <option value="commute">Trajets ↑</option></select>
+  </label>
+  <button id="f-reset">Réinitialiser</button>
+</aside>
+
+<main>
+  <section id="list"></section>
+  <section id="map" hidden></section>
+  <section id="detail" hidden></section>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

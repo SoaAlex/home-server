@@ -72,3 +72,9 @@ tmp/
 teslamate-backup.sql
 
 *.cache
+# Maison
+maison/data/
+maison/.scratch/
+# Maison — données personnelles (critères, adresses, annonces réelles)
+maison/config/criteria.yaml
+maison/tests/fixtures/

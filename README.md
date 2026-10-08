@@ -11,7 +11,8 @@ docker/
 ├── home-server/         Core services (reverse proxy, DNS, VPN, passwords, streaming)
 ├── teslamate/           Tesla vehicle tracking & Grafana dashboards
 ├── minecraft/           Minecraft server (CurseForge modpack)
-└── qbittorrent/         Torrent client (managed by the UGOS app, not compose)
+├── qbittorrent/         Torrent client (managed by the UGOS app, not compose)
+└── maison/              Private house-search crawler + UI (port 8090, LAN/VPN only) — see maison/README.md
 ```
 
 To rebuild everything after an OS reset or NAS swap, follow **[REBUILD.md](REBUILD.md)**.
@@ -73,6 +74,7 @@ LAN interface (`192.168.1.55`). Two consequences:
 cd /volume1/docker/common && docker compose up -d
 cd /volume1/docker/home-server && docker compose up -d
 cd /volume1/docker/teslamate && docker compose up -d
+cd /volume1/docker/maison && docker compose up -d
 ```
 
 ## Configuration
@@ -84,6 +86,7 @@ Secrets are stored in `.env` files (git-ignored). Each stack has its own:
 | `common/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
 | `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `CODE_SERVER_PASSWORD`, `PTZ_CAMERA_USER`, `PTZ_API_TOKEN` |
 | `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI` |
+| `maison/.env` | `DATABASE_URL`, `DISCORD_WEBHOOK_URL`, `ENRICH_TOKEN`, `IMAP_USER`, `IMAP_PASSWORD`, … |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
 
 Create from templates:
