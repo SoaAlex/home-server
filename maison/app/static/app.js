@@ -37,9 +37,9 @@ function trips(l) {
   const c = l.commute || {};
   return Object.entries(dests()).map(([k, d]) => `${esc(d.short || k)} ${c[k] ?? "?"} min`).join(" · ");
 }
-function tri(v, label) {
+function tri(v, label, emoji = "") {
   const cls = v === true ? "yes" : v === false ? "no" : "";
-  return `<span class="b ${cls}">${v === true ? "✓" : v === false ? "✕" : "?"} ${label}</span>`;
+  return `<span class="b ${cls}">${emoji} ${label} ${v === true ? "✓" : v === false ? "✕" : "?"}</span>`;
 }
 function favButtons(l) {
   return [["favorite", "★", "Favori"], ["to_visit", "🗓", "À visiter"], ["rejected", "✕", "Rejeter"]]
@@ -132,14 +132,14 @@ function card(l) {
         <span class="ppm">${price && surf ? fmt(price / surf) + " €/m²" : ""}</span></div>
       <div class="title">${esc(eff(l, "title"))}</div>
       <div class="loc">📍 ${esc(eff(l, "city") || "Ville à compléter")}${street}</div>
-      <div class="specs"><span>📐 ${fmt(eff(l, "surface_m2"))} m²</span><span>🌳 ${fmt(eff(l, "land_m2"))} m²</span>
+      <div class="specs"><span>📐 ${fmt(eff(l, "surface_m2"))} m²</span><span title="Terrain">🌱 ${fmt(eff(l, "land_m2"))} m²</span>
         <span>🛏 ${eff(l, "bedrooms") ?? "?"} ch.</span><span>${dpePill(eff(l, "dpe"))}</span></div>
-      <div class="badges">${tri(eff(l, "has_garage"), "garage")}${tri(eff(l, "has_garden"), "jardin")}
-        ${eff(l, "has_bathtub") ? `<span class="b yes">✓ baignoire</span>` : ""}
-        <span class="b">${esc(TYPES[eff(l, "property_type")] || "Type ?")}</span>
-        ${works === "none" ? `<span class="b yes">sans travaux</span>` : works === "heavy" ? `<span class="b no">travaux</span>` : works === "light" ? `<span class="b mid">à rafraîchir</span>` : ""}
-        ${e.style === "cubic" ? `<span class="b mid">cubique</span>` : ""}
-        ${e.garden_shape === "long" ? `<span class="b mid">jardin en longueur</span>` : ""}</div>
+      <div class="badges">${tri(eff(l, "has_garage"), "garage", "🚙")}${tri(eff(l, "has_garden"), "jardin", "🌳")}
+        ${eff(l, "has_bathtub") ? `<span class="b yes">🛁 baignoire ✓</span>` : ""}
+        <span class="b">🏠 ${esc(TYPES[eff(l, "property_type")] || "Type ?")}</span>
+        ${works === "none" ? `<span class="b yes">✨ sans travaux</span>` : works === "heavy" ? `<span class="b no">🔨 travaux</span>` : works === "light" ? `<span class="b mid">🖌️ à rafraîchir</span>` : ""}
+        ${e.style === "cubic" ? `<span class="b mid">🧊 cubique</span>` : ""}
+        ${e.garden_shape === "long" ? `<span class="b mid">↔️ jardin en longueur</span>` : ""}</div>
       <div class="foot"><span>🚗 ${trips(l)}</span><span>${esc(l.source)}${l._others.length ? " +" + l._others.length : ""}</span></div>
     </div></article>`;
 }
@@ -162,19 +162,22 @@ function renderMap(items) {
   for (const l of items) {
     if (l.lat == null || l.excluded_reason) continue;
     const col = scoreHex(l.score);
-    if (l.geo_precision === "approx")
+    const big = (l.score || 0) >= 55;
+    if (big && l.geo_precision === "approx")
       L.circle([l.lat, l.lon], { radius: 250, color: col, weight: 1, fillOpacity: 0.05, interactive: false }).addTo(state.layer);
-    const icon = L.divIcon({ className: "", iconSize: [34, 24], iconAnchor: [17, 12],
-      html: `<div class="mk ${l.geo_precision !== "exact" ? "approx" : ""}" style="background:${col}">${l.score ?? "–"}</div>` });
+    const icon = big
+      ? L.divIcon({ className: "", iconSize: [34, 24], iconAnchor: [17, 12],
+          html: `<div class="mk ${l.geo_precision !== "exact" ? "approx" : ""}" style="background:${col}">${l.score ?? "–"}</div>` })
+      : L.divIcon({ className: "", iconSize: [12, 12], iconAnchor: [6, 6], html: `<div class="dot" style="background:${col}"></div>` });
     const p = photos(l)[0];
-    state.markers[l.id] = L.marker([l.lat, l.lon], { icon, riseOnHover: true }).addTo(state.layer)
+    state.markers[l.id] = L.marker([l.lat, l.lon], { icon, riseOnHover: true, zIndexOffset: (l.score || 0) * 10, baseZ: (l.score || 0) * 10 }).addTo(state.layer)
       .bindPopup(`<div class="pop" data-open="${l.id}">${p ? `<img src="${esc(p)}">` : ""}<b>${fmt(eff(l, "price"))} €</b> · ${l.score ?? "–"}/100<br>
         ${esc(eff(l, "title"))}<br><span class="muted">${esc(l.address || eff(l, "city") || "")}</span></div>`);
   }
 }
 function highlight(id, on) {
   const m = state.markers[id];
-  if (m && m._icon && m._icon.firstChild) { m._icon.firstChild.classList.toggle("hl", on); m.setZIndexOffset(on ? 1000 : 0); }
+  if (m && m._icon && m._icon.firstChild) { m._icon.firstChild.classList.toggle("hl", on); m.setZIndexOffset(on ? 5000 : (m.options.baseZ || 0)); }
 }
 
 /* ---------- fiche ---------- */
