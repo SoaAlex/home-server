@@ -84,7 +84,10 @@ main.maponly #list { display: none; }
 .fav { position: absolute; bottom: 10px; right: 10px; display: flex; gap: 6px; }
 .fav button { width: 34px; height: 34px; border-radius: 50%; border: 0; background: #ffffffe6; color: #333; cursor: pointer; font-size: 15px; box-shadow: var(--shadow); }
 .fav button.on { background: var(--accent); color: #fff; }
-.fav button.on[data-user=rejected] { background: var(--bad); }
+.fav button.on[data-reaction=like] { background: var(--good); }
+.fav button.on[data-reaction=dislike] { background: var(--bad); }
+.card.liked { border-color: var(--good); box-shadow: 0 0 0 2px #1f9d6b55, var(--shadow); }
+.card.leaving { opacity: 0; transform: scale(.96); transition: opacity .25s, transform .25s; }
 .body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
 .price-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .price { font-size: 19px; font-weight: 800; letter-spacing: -.01em; }
@@ -115,6 +118,8 @@ main.maponly #list { display: none; }
 .d-head .fav { position: static; }
 .d-head .fav button { box-shadow: none; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); }
 .d-head .fav button.on { background: var(--accent); color: #fff; }
+.d-head .fav button.on[data-reaction=like] { background: var(--good); }
+.d-head .fav button.on[data-reaction=dislike] { background: var(--bad); }
 .carousel { position: relative; background: #000; height: min(56vw, 60vh); }
 .carousel img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .carousel button { position: absolute; top: 50%; transform: translateY(-50%); border: 0; width: 42px; height: 42px; border-radius: 50%; background: #ffffffd9; cursor: pointer; font-size: 22px; color: #222; }

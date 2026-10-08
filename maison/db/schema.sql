@@ -52,3 +52,8 @@ CREATE TABLE IF NOT EXISTS listing (
 CREATE INDEX IF NOT EXISTS listing_score_idx ON listing (score DESC);
 CREATE INDEX IF NOT EXISTS listing_fp_idx ON listing (fingerprint);
 CREATE INDEX IF NOT EXISTS listing_enrich_idx ON listing (enrichment_status);
+
+-- Like / dislike (indépendant de user_status = à visiter / visitée)
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS reaction TEXT;   -- like | dislike | NULL
+UPDATE listing SET reaction = 'like', user_status = NULL WHERE user_status = 'favorite';
+UPDATE listing SET reaction = 'dislike', user_status = NULL WHERE user_status = 'rejected';
