@@ -141,6 +141,9 @@ main.maponly #list { display: none; }
 .minimap { height: 220px; border-radius: 10px; overflow: hidden; margin-top: 10px; }
 .trip { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px dashed var(--border); }
 .trip:last-child { border: 0; }
+.addr-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.btn.sm { padding: 5px 10px; font-size: 12.5px; font-weight: 600; }
+.small { font-size: 12px; margin-top: 6px; }
 
 /* ---------- carte ---------- */
 .leaflet-popup-content { margin: 10px; }
