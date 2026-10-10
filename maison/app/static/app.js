@@ -16,7 +16,7 @@ const eff = (l, k) => (l.enrichment && l.enrichment[k] != null ? l.enrichment[k]
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const scoreCol = (s) => (s >= 75 ? "var(--good)" : s >= 55 ? "var(--mid)" : "var(--low)");
 const scoreHex = (s) => (s >= 75 ? "#1f9d6b" : s >= 55 ? "#e29a1b" : "#8a94a3");
-const isNew = (l) => Date.now() - new Date(l.first_seen) < 48 * 3600e3;
+const isNew = (l) => !l.seen_at && Date.now() - new Date(l.first_seen) < 48 * 3600e3;
 const dests = () => (state.crit && state.crit.commute && state.crit.commute.destinations) || {};
 
 function norm(s) {
@@ -186,6 +186,7 @@ function highlight(id, on) {
 async function openDetail(id) {
   if (state.openId === id && !$("#drawer").hidden) return;
   state.openId = id;
+  markSeen(id);
   const l = await fetch(`/api/listings/${id}`).then((r) => r.json());
   const e = l.enrichment || {}, c = l.commute || {};
   state.photos = photos(l); state.photoIdx = 0;
@@ -262,6 +263,14 @@ function showPhoto(i) {
 }
 function closeDetail() { location.hash = state.lastRoute || "#/"; }
 function reopen(id) { state.openId = null; openDetail(id); }
+function markSeen(id) {
+  const l = state.all.find((x) => x.id === id);
+  if (l && l.seen_at) return;
+  if (l) l.seen_at = new Date().toISOString();
+  fetch(`/api/listings/${id}/seen`, { method: "POST" });
+  const tag = $(`.card[data-id="${id}"] .tag.new`);
+  if (tag) tag.remove();
+}
 
 /* ---------- rendu ---------- */
 function render() {
