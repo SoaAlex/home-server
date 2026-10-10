@@ -23,3 +23,7 @@ alert:
   max_price: 400000
   require_confirmed_garage_garden: true
 zones: {}
+# Agences sur le CMS Netty (app/sources/netty.py). username = img.netty.immo/productcw/<username>/…
+# Même `group` = même portefeuille partagé (annonces dédoublonnées).
+netty_agencies:
+- {name: Mon agence, url: "https://www.exemple-agence.fr", username: exemple}
