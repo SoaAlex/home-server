@@ -5,7 +5,7 @@ Stack privée (LAN + VPN uniquement, pas de proxy host NPM) : http://192.168.1.5
 | Service | Rôle |
 |---------|------|
 | `maison-web` | FastAPI : UI (liste filtrable, carte, fiche) + API (`/api/listings`, `/api/enrichment/*`) |
-| `maison-collector` | Boucle ~horaire : Bien'ici JSON, notaires JSON, Maes (WordPress), agences Netty (`netty_agencies` dans criteria.yaml), alertes e-mail IMAP → score → photos/géo/trajets/DPE→adresse → alerte Discord |
+| `maison-collector` | Boucle ~horaire : Bien'ici JSON, notaires JSON, Maes (WordPress), agences Netty (`netty_agencies` dans criteria.yaml), petites agences à parseur dédié (`app/sources/agences.py` : Référence Immobilière, Immobilière de Croix, Dreossi), alertes e-mail IMAP → score → photos/géo/trajets/DPE→adresse → alerte Discord |
 
 - Base `maison` (rôle `maison`) sur `common-postgres`, réseau `common-network`. Tests : base `maison_test`.
 - Critères modifiables : `config/criteria.yaml` (privé, git-ignoré ; modèle `config/criteria.example.yaml`) (pris en compte au cycle suivant). Ajouter une agence Netty : trouver son `username`
