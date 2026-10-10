@@ -84,6 +84,13 @@ def test_reaction_like_dislike(client):
     assert lid not in [x["id"] for x in pend]          # pas de tokens dépensés sur une maison rejetée
 
 
+def test_seen_clears_new_flag(client):
+    lid = client.get("/api/listings").json()[0]["id"]
+    assert client.get(f"/api/listings/{lid}").json()["seen_at"] is None
+    first = client.post(f"/api/listings/{lid}/seen").json()["seen_at"]
+    assert first and client.post(f"/api/listings/{lid}/seen").json()["seen_at"] == first   # idempotent
+
+
 def test_user_status(client):
     lid = client.get("/api/listings").json()[0]["id"]
     assert client.post(f"/api/listings/{lid}/user", json={"user_status": "to_visit"}).status_code == 200

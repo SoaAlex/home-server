@@ -19,7 +19,7 @@ COLS = ("id, source, url, title, price, surface_m2, land_m2, rooms, bedrooms, pr
         "postal_code, dpe, ges, year_built, has_garage, has_garden, has_bathtub, works, agency, lat, lon, "
         "geo_precision, address, photos, photo_urls, first_seen, last_seen, published_at, status, "
         "price_history, commute, enrichment, enrichment_status, score, score_details, excluded_reason, "
-        "fingerprint, alerted_at, user_status, user_note, reaction")
+        "fingerprint, alerted_at, user_status, user_note, reaction, seen_at")
 # Champs que l'agent d'enrichissement peut écrire directement dans les colonnes (liste blanche)
 DIRECT = ("address", "lat", "lon", "city", "postal_code", "description", "title", "surface_m2",
           "land_m2", "bedrooms", "rooms", "dpe", "price")
@@ -73,6 +73,17 @@ def set_user(lid: int, body: dict):
         conn.execute("UPDATE listing SET user_status=%s, user_note=COALESCE(%s, user_note) WHERE id=%s",
                      (body.get("user_status"), body.get("user_note"), lid))
     return {"ok": True}
+
+
+@app.post("/api/listings/{lid}/seen")
+def mark_seen(lid: int):
+    """Appelé par l'UI à l'ouverture d'une fiche : retire le badge « Nouveau »."""
+    with db.connect() as conn:
+        row = conn.execute("UPDATE listing SET seen_at = COALESCE(seen_at, now()) WHERE id=%s RETURNING seen_at",
+                           (lid,)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    return {"id": lid, "seen_at": row["seen_at"]}
 
 
 @app.post("/api/listings/{lid}/reaction")

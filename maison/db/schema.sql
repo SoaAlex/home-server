@@ -55,5 +55,6 @@ CREATE INDEX IF NOT EXISTS listing_enrich_idx ON listing (enrichment_status);
 
 -- Like / dislike (indépendant de user_status = à visiter / visitée)
 ALTER TABLE listing ADD COLUMN IF NOT EXISTS reaction TEXT;   -- like | dislike | NULL
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS seen_at TIMESTAMPTZ;   -- 1re ouverture de la fiche dans l'UI
 UPDATE listing SET reaction = 'like', user_status = NULL WHERE user_status = 'favorite';
 UPDATE listing SET reaction = 'dislike', user_status = NULL WHERE user_status = 'rejected';
