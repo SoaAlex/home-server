@@ -10,10 +10,10 @@ from psycopg.types.json import Jsonb
 from app import db, settings, geo, photos, alerts
 from app.ingest import upsert, mark_gone
 from app.scoring import score_listing
-from app.sources import bienici, notaires, maes, email_alerts
+from app.sources import bienici, notaires, maes, netty, email_alerts
 
 log = logging.getLogger("collector")
-FULL_SWEEP = {"bienici": bienici, "notaires": notaires, "maes": maes}
+FULL_SWEEP = {"bienici": bienici, "notaires": notaires, "maes": maes, "netty": netty}
 PENDING_OK = ("à compléter",)   # exclusions « provisoires » : l'agent Hermes doit compléter
 
 
@@ -89,11 +89,14 @@ def run_once():
     crit = settings.load_criteria()
     touched = []
     with httpx.Client(headers={"User-Agent": settings.USER_AGENT}, timeout=30) as client, db.connect() as conn:
-        known_maes = {r["external_id"]: (r["raw"] or {}).get("modified") for r in
-                      conn.execute("SELECT external_id, raw FROM listing WHERE source='maes'").fetchall()}
+        known = {"maes": {}, "netty": {}}
+        for r in conn.execute("SELECT source, external_id, url, raw FROM listing "
+                              "WHERE source IN ('maes','netty') AND status='active'").fetchall():
+            raw = r["raw"] or {}
+            known[r["source"]][r["external_id"]] = raw.get("modified") if r["source"] == "maes" else {**raw, "url": r["url"]}
         for name, mod in FULL_SWEEP.items():
             try:
-                items = mod.fetch(client, crit, known=known_maes if name == "maes" else None)
+                items = mod.fetch(client, crit, known=known.get(name))
                 seen = set()
                 for it in items:
                     lid, _ = upsert(conn, it)

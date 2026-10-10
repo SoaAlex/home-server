@@ -32,7 +32,8 @@ def _auth(token):
 
 @app.on_event("startup")
 def startup():
-    db.init_schema()
+    # Le collecteur applique aussi le schéma à son démarrage : ici on n'attend pas derrière ses transactions.
+    db.init_schema(lock_timeout="500ms")   # < deadlock_timeout (1 s) : le web cède toujours en premier
 
 
 @app.get("/", response_class=HTMLResponse)

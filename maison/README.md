@@ -5,10 +5,12 @@ Stack privée (LAN + VPN uniquement, pas de proxy host NPM) : http://192.168.1.5
 | Service | Rôle |
 |---------|------|
 | `maison-web` | FastAPI : UI (liste filtrable, carte, fiche) + API (`/api/listings`, `/api/enrichment/*`) |
-| `maison-collector` | Boucle ~horaire : Bien'ici JSON, notaires JSON, Maes (WordPress), alertes e-mail IMAP → score → photos/géo/trajets/DPE→adresse → alerte Discord |
+| `maison-collector` | Boucle ~horaire : Bien'ici JSON, notaires JSON, Maes (WordPress), agences Netty (`netty_agencies` dans criteria.yaml), alertes e-mail IMAP → score → photos/géo/trajets/DPE→adresse → alerte Discord |
 
 - Base `maison` (rôle `maison`) sur `common-postgres`, réseau `common-network`. Tests : base `maison_test`.
-- Critères modifiables : `config/criteria.yaml` (privé, git-ignoré ; modèle `config/criteria.example.yaml`) (pris en compte au cycle suivant). Ajouter une ville :
+- Critères modifiables : `config/criteria.yaml` (privé, git-ignoré ; modèle `config/criteria.example.yaml`) (pris en compte au cycle suivant). Ajouter une agence Netty : trouver son `username`
+  dans les URL d'images `img.netty.immo/productcw/<username>/…` de son site, ajouter une ligne `netty_agencies`
+  (même `group` si elle partage le portefeuille d'une autre), tester avec `python scripts/netty_dryrun.py`. Ajouter une ville :
   l'ajouter à `preferred_cities`/`other_cities` puis relancer `scripts/resolve_zones.py`.
 - Photos : `data/photos/<id>/NN.jpg` (git-ignoré).
 - Enrichissement (adresse, analyse photos, fiches e-mail) : cron Hermes `maison-enrichment`
