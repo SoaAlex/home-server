@@ -10,10 +10,10 @@ from psycopg.types.json import Jsonb
 from app import db, settings, geo, photos, alerts
 from app.ingest import upsert, mark_gone
 from app.scoring import score_listing
-from app.sources import bienici, notaires, maes, netty, email_alerts
+from app.sources import bienici, notaires, maes, netty, agences, email_alerts
 
 log = logging.getLogger("collector")
-FULL_SWEEP = {"bienici": bienici, "notaires": notaires, "maes": maes, "netty": netty}
+FULL_SWEEP = {"bienici": bienici, "notaires": notaires, "maes": maes, "netty": netty, "agences": agences}
 PENDING_OK = ("à compléter",)   # exclusions « provisoires » : l'agent Hermes doit compléter
 
 
@@ -61,10 +61,11 @@ def postprocess(conn, client, crit, lid):
     if not row["photos"] and row["photo_urls"]:
         upd["photos"] = Jsonb(photos.download(client, lid, row["photo_urls"], settings.DATA_DIR / "photos", limit=10))
     insee = row["insee"]
-    if not insee and row["city"]:
+    if (not insee or row["lat"] is None) and row["city"]:
         g = geo.geocode(client, f"{row['city']} {row['postal_code'] or ''}".strip(), kind="municipality")
         if g:
-            insee = upd["insee"] = g["citycode"]
+            if not insee:
+                insee = upd["insee"] = g["citycode"]
             if row["lat"] is None:
                 upd.update(lat=g["lat"], lon=g["lon"], geo_precision="city")
     enr = row["enrichment"] or {}
@@ -89,9 +90,9 @@ def run_once():
     crit = settings.load_criteria()
     touched = []
     with httpx.Client(headers={"User-Agent": settings.USER_AGENT}, timeout=30) as client, db.connect() as conn:
-        known = {"maes": {}, "netty": {}}
+        known = {"maes": {}, "netty": {}, "agences": {}}
         for r in conn.execute("SELECT source, external_id, url, raw FROM listing "
-                              "WHERE source IN ('maes','netty') AND status='active'").fetchall():
+                              "WHERE source IN ('maes','netty','agences') AND status='active'").fetchall():
             raw = r["raw"] or {}
             known[r["source"]][r["external_id"]] = raw.get("modified") if r["source"] == "maes" else {**raw, "url": r["url"]}
         for name, mod in FULL_SWEEP.items():
