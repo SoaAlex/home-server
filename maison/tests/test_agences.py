@@ -105,3 +105,22 @@ def test_fetch_site_down_keeps_known(monkeypatch):
     known = {"croix:1": {"price": 1, "url": "http://x/1"}}
     items = agences.fetch(Client(down=["immobiliere-de-croix"]), CRIT, known=known)
     assert {"source": "agences", "external_id": "croix:1", "url": "http://x/1"} in items
+
+
+def test_iec_list():
+    cards = agences.iec_parse_list(read("iec_list.html"))
+    assert len(cards) == 12
+    cap = next(c for c in cards if c["id"] == "1585")
+    assert cap == {"url": "https://www.immobilier-et-compagnie.fr/vente-maison-capinghem,b1585/",
+                   "kind": "maison", "id": "1585", "city": "Capinghem", "price": 577000}
+    assert any(c["kind"] == "appartement" for c in cards)
+
+
+def test_iec_detail_capinghem():
+    d = agences.iec_parse_detail(read("iec_detail.html"))
+    assert d["city"] == "Capinghem" and d["ref"] == "LOM630" and d["price"] == 577000
+    assert d["surface_m2"] == 180 and d["land_m2"] == 431 and d["bedrooms"] == 7 and d["year_built"] == 2005
+    assert d["dpe"] == "C" and d["dpe_value"] == 120 and d["ges"] == "C" and d["dpe_date"] == "2025-06-18"
+    assert d["has_garage"] and d["has_garden"] and d["has_bathtub"] and d["works"] == "none"
+    assert d["property_type"] == "detached" and len(d["photo_urls"]) == 7
+    assert d["description"].startswith("COUP DE") and "Ref." not in d["description"]

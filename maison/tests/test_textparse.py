@@ -40,3 +40,11 @@ def test_works():
     assert detect_works("à rafraîchir") == "light"
     assert detect_works("Aucun travaux, rénovée en 2022") == "none"
     assert detect_works("Belle maison") is None
+
+
+def test_works_negations_and_typos():
+    assert detect_works("Une opportunité rare, sans aucun travaaux à prévoir !") == "none"
+    assert detect_works("Aucun travaux à prévoir, posez vos meubles") == "none"
+    assert detect_works("Pas de travaux à prévoir") == "none"
+    assert detect_works("Posez vos valises !") == "none"
+    assert detect_works("Gros travaux à prévoir, pas de garage") == "heavy"

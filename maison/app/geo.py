@@ -48,14 +48,15 @@ def ademe_address(client, insee: str, dpe: str | None, surface: float | None,
     """Cherche le DPE de la maison dans la base ADEME ; renvoie l'adresse si un seul candidat."""
     if not (dpe_date or dpe_value):
         return None
-    q = [f"code_insee_ban:{insee}", "type_batiment:maison"]
+    dd = _d(dpe_date)
+    # type_batiment est souvent absent des DPE récents : on ne l'exige que sans date (sinon trop de faux négatifs)
+    q = [f"code_insee_ban:{insee}"] + ([] if dd else ["type_batiment:maison"])
     if dpe:
         q.append(f"etiquette_dpe:{dpe}")
-    if dpe_value:
-        q.append(f"conso_5_usages_par_m2_ep:{int(dpe_value)}")
+    if dpe_value:   # les agences arrondissent (117,9 kWh affiché « 120 ») : ±5 %
+        q.append(f"conso_5_usages_par_m2_ep:[{int(dpe_value * 0.95)} TO {int(dpe_value * 1.05) + 1}]")
     if surface:
         q.append(f"surface_habitable_logement:[{surface * 0.95:.1f} TO {surface * 1.05:.1f}]")
-    dd = _d(dpe_date)
     if dd:
         q.append(f"date_etablissement_dpe:[{dd - timedelta(days=3)} TO {dd + timedelta(days=3)}]")
     r = client.get(ADEME, params={"qs": " AND ".join(q), "size": 5,

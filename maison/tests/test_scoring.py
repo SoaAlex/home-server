@@ -66,3 +66,10 @@ def test_fingerprint_same_house_two_sources():
     a = dict(city="Wambrechies", postal_code="59118", price=419000, surface_m2=121, land_m2=402)
     b = dict(city="WAMBRECHIES", postal_code="59118", price=420000, surface_m2=120.6, land_m2=400)
     assert fingerprint(a) == fingerprint(b)
+
+
+def test_user_added_listing_kept_above_budget():
+    over = {**BASE, "price": 577000}
+    assert score_listing(over, CRIT)[2] == "prix > max"
+    s, d, why = score_listing({**over, "enrichment": {"user_added": True}}, CRIT)
+    assert why is None and d["prix"] == 0 and s > 0

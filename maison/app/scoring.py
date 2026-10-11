@@ -33,7 +33,7 @@ def score_listing(row: dict, crit: dict) -> tuple[int, dict, str | None]:
     if ck not in pref and ck not in other:
         return 0, {}, "hors zone"
     price = r.get("price")
-    if price and price > crit["price"]["max"]:
+    if price and price > crit["price"]["max"] and not enr.get("user_added"):   # ajout manuel : budget assumé
         return 0, {}, "prix > max"
     if crit["require"].get("garage") and r.get("has_garage") is False:
         return 0, {}, "pas de garage"
