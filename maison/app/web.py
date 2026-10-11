@@ -152,7 +152,7 @@ def pending(limit: int = 5, x_token: str = Header(None)):
             f"SELECT {COLS}, description, raw->'blurInfo' AS blur FROM listing WHERE status='active' AND enrichment_status='pending' "
             "AND (excluded_reason IS NULL OR excluded_reason='à compléter') "
             "AND (reaction IS DISTINCT FROM 'dislike' OR enrichment ? 'address_request') "
-            "ORDER BY (enrichment ? 'address_request') DESC, score DESC NULLS LAST, first_seen DESC LIMIT %s",
+            "ORDER BY (enrichment ? 'address_request') DESC, (first_seen > now() - interval '48 hours') DESC, score DESC NULLS LAST, first_seen DESC LIMIT %s",
             (limit,)).fetchall()
 
 

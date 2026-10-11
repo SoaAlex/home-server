@@ -60,3 +60,23 @@ def test_real_leboncoin_mail():
     assert [i["price"] for i in items] == [366000, 539900, 280000]
     assert [i["city"] for i in items] == ["Croix", "Marcq-en-Barœul", "Croix"]
     assert items[1]["land_m2"] == 535 and items[0]["surface_m2"] == 125
+
+
+@pytest.mark.skipif(not os.path.exists(FIX + "leboncoin_mail.eml"), reason="fixture privée")
+def test_real_mails_carry_ad_thumbnails():
+    lbc = parse_message(open(FIX + "leboncoin_mail.eml", "rb").read(), cities=CITIES)
+    photos = [i["photo_urls"] for i in lbc]
+    assert all(len(p) == 1 and "img.leboncoin.fr/api/" in p[0] for p in photos)
+    assert len({p[0] for p in photos}) == 3                     # une vignette différente par annonce
+
+    class Client:   # le 1er lien (logo) mène à l'accueil, les autres à l'annonce
+        n = 0
+
+        def get(self, url, **_):
+            Client.n += 1
+            loc = ("https://www.seloger.com/" if Client.n == 1 else
+                   "https://www.seloger.com/annonce/achat/hauts-de-france/nord-59/lille-59000/26UQCXVM9PZQ")
+            return type("R", (), {"headers": {"location": loc}})()
+
+    sl = parse_message(open(FIX + "seloger_mail.eml", "rb").read(), make_resolver(Client()), CITIES)
+    assert len(sl) == 1 and len(sl[0]["photo_urls"]) == 1 and "w=540" in sl[0]["photo_urls"][0]

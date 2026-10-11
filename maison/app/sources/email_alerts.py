@@ -29,6 +29,10 @@ SENDERS = ("leboncoin", "seloger", "pap.fr", "jinka")
 TRACKING_HOSTS = re.compile(r"https?://(?:click|track|links?|email|mail|lnk|r)\.[^/]+|https?://[^/]*(?:click|track)[^/]*/",
                             re.I)
 PRICE = re.compile(r"(\d{2,3}(?:[\s\u202f\xa0.]\d{3})+)\s*€(?!\s*/)")
+# Vignettes d'annonce dans les e-mails (souvent en background-image), pas les logos/icônes
+PHOTO = re.compile(r"https://(?:cdnihddipa\.cloudimg\.io/[^\"'()\s]+?\.jpe?g[^\"'()\s]*"
+                   r"|img\.leboncoin\.fr/api/v1/[^\"'()\s]+?\.jpe?g[^\"'()\s]*"
+                   r"|cdn\.pap\.fr/photos/[^\"'()\s]+|[a-z0-9.-]*jinka[^\"'()\s]*/[^\"'()\s]+\.jpe?g[^\"'()\s]*)", re.I)
 MAX_MESSAGES_PER_RUN = 40
 
 
@@ -49,6 +53,17 @@ def _match(url):
 
 def _num(s):
     return int(float(re.sub(r"[\s\u202f\xa0]", "", s).replace(",", "."))) if s else None
+
+
+def _best_photos(urls):
+    """Une URL par image (la plus grande variante : cloudimg ?w=540 plutôt que ?w=270)."""
+    best = {}
+    for u in urls:
+        base = u.split("?")[0]
+        w = int((re.search(r"[?&]w=(\d+)", u) or [0, 0])[1])
+        if base not in best or w > best[base][0]:
+            best[base] = (w, u)
+    return [u for _, u in best.values()]
 
 
 def parse_card(text: str, cities=()) -> dict:
@@ -93,7 +108,10 @@ def parse_message(raw: bytes, resolve=None, cities=()) -> list[dict]:
         html = re.sub(r"(https?://\S+)", r'<a href="\1">', html)
     html = re.sub(r"<style.*?</style>|<head.*?</head>", " ", html, flags=re.S | re.I)
     parts = re.split(r"<a\s[^>]*?href=[\"']([^\"']+)[\"'][^>]*>", html)   # texte, lien, texte, lien…
-    cards, order, current = {}, [], None
+    # Les vignettes précèdent le lien de LEUR annonce (vérifié sur leboncoin/SeLoger) : une image est
+    # mise en attente puis rattachée au prochain lien d'annonce (ou à l'annonce courante si le lien suivant
+    # n'en est pas une).
+    cards, order, current, pending = {}, [], None, []
     for idx, chunk in enumerate(parts):
         if idx % 2 == 1:                                      # un lien
             url = unescape(chunk)
@@ -101,13 +119,17 @@ def parse_message(raw: bytes, resolve=None, cities=()) -> list[dict]:
             if not m and resolve and TRACKING_HOSTS.match(url):
                 final = resolve(url)
                 m = _match(final) if final else None
-            if m:
-                key = (m[0], m[1])
-                if key not in cards:
-                    cards[key] = {"url": m[2], "text": []}
-                    order.append(key)
-            current = (m[0], m[1]) if m else None
+            key = (m[0], m[1]) if m else None
+            if key and key not in cards:
+                cards[key] = {"url": m[2], "text": [], "photos": []}
+                order.append(key)
+            target = key or current
+            if target and pending:
+                cards[target]["photos"] += pending
+                pending = []
+            current = key
             continue
+        pending += [unescape(p) for p in PHOTO.findall(chunk)]
         if current:
             txt = " ".join(unescape(re.sub(r"<[^>]+>", " ", chunk)).split())
             if txt:
@@ -121,7 +143,7 @@ def parse_message(raw: bytes, resolve=None, cities=()) -> list[dict]:
                                       f"{f['surface_m2']} m²" if f.get("surface_m2") else "",
                                       f"— {f.get('city') or '?'}") if x)
         items.append(dict(source=src, external_id=ext, url=cards[(src, ext)]["url"], title=title,
-                          description=text or None, **f,
+                          description=text or None, photo_urls=_best_photos(cards[(src, ext)]["photos"]), **f,
                           raw={"subject": subject, "from": str(msg["from"] or ""), "card": text}))
     return items
 

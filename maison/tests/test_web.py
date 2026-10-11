@@ -95,3 +95,10 @@ def test_user_status(client):
     lid = client.get("/api/listings").json()[0]["id"]
     assert client.post(f"/api/listings/{lid}/user", json={"user_status": "to_visit"}).status_code == 200
     assert client.get(f"/api/listings/{lid}").json()["user_status"] == "to_visit"
+
+
+def test_pending_puts_recent_listings_first(client, dburl):
+    with db.connect(dburl) as conn:   # « a » (score 80) devient ancienne ; « c » (sans score) est récente
+        conn.execute("UPDATE listing SET first_seen = now() - interval '5 days' WHERE external_id='a'")
+    pend = client.get("/api/enrichment/pending", headers={"X-Token": "tok"}).json()
+    assert [x["url"] for x in pend] == ["https://lbc/c", "https://e/a"]
