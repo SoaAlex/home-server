@@ -3,6 +3,7 @@
 - Référence Immobilière (Wambrechies) : liste HTML paginée + fiche detail-vente?id=N
 - Immobilière de Croix (Winimmobilier) : POST ajax.listbien.php (toutes les annonces) + ajax.getbien.php
 - Dreossi Immobilier (Wix, Wambrechies) : page /properties (rendu serveur) + fiche /properties/<slug>
+- Immobilier & Compagnie (Lomme, Pont-à-Marcq, Quesnoy) : catalogue /nos-bien-a-vendre,c2/page-N/ + fiche ,bID/
 
 Square Habitat n'est pas ici : son réseau Nord de France est devenu Citya (déjà couvert par Bien'ici).
 """
@@ -12,6 +13,7 @@ import logging
 import re
 import time
 from app import textparse as tp
+from app.sources import maes
 
 log = logging.getLogger(__name__)
 SOURCE = "agences"
@@ -250,7 +252,100 @@ def fetch_dreossi(client, crit, known):
     return out
 
 
-AGENCIES = {"refimmo": fetch_refimmo, "croix": fetch_croix, "dreossi": fetch_dreossi}
+# ---------- Immobilier & Compagnie (Lomme, Pont-à-Marcq, Quesnoy-sur-Deûle) ----------
+IEC_BASE = "https://www.immobilier-et-compagnie.fr"
+IEC_LINK = re.compile(r'href="(https://www\.immobilier-et-compagnie\.fr/vente-([a-z]+)-([a-z0-9-]+),b(\d+)/)"')
+
+
+def _ges_class(ges):
+    return next((c for c, lim in zip("ABCDEF", (6, 11, 30, 50, 70, 100)) if ges <= lim), "G")
+
+
+def iec_parse_list(page: str) -> list[dict]:
+    out = []
+    for card in re.split(r'<div class="bien-lm">', page)[1:]:
+        m = IEC_LINK.search(card)
+        if not m:
+            continue
+        price = re.search(r'<div class="price">\s*([\d\s\u202f.]+)\s*€', card)
+        city = re.search(r'<span class="bien-city">\s*-\s*([^<]+)<', card)
+        out.append(dict(url=m.group(1), kind=m.group(2), id=m.group(4),
+                        city=htmlmod.unescape(city.group(1)).strip() if city else m.group(3).replace("-", " ").title(),
+                        price=_num(price.group(1)) if price else None))
+    return out
+
+
+def iec_parse_detail(page: str) -> dict:
+    body = page.split('<div id="bien"', 1)[-1]
+    title = _flat(_text((re.search(r"<h1>(.*?)</h1>", body, re.S) or [None, ""])[1]))
+    city = re.search(r'<span class="bien-city">\s*-\s*([^<]+)<', body)
+    t = _flat(_text(body))
+    desc = t.split(title, 1)[-1] if title else t
+    desc = re.split(r"\bRef\.\s*[A-Z]+\d+", desc)[0].replace(city.group(1).strip() if city else "", "", 1).strip(" -")
+    ref = re.search(r"\bRef\.\s*([A-Z]+\d+)", t)
+    price = re.search(r"Ref\.\s*[A-Z]+\d+\s+(\d{2,3}(?:[\s\u202f.]\d{3})+)\s*€", t)
+    dpe = re.search(r"Coût énergétique annuel\s*:\s*[\d\s\u202f.,]+€\s+(\d+)\s+(\d+)", t)
+    dpe_date = re.search(r"Date diagnostic énergétique\s*:\s*(\d{2})/(\d{2})/(\d{4})", t)
+    energy, ges = (int(dpe.group(1)), int(dpe.group(2))) if dpe else (None, None)
+    full = title + " " + desc
+    surface = re.search(r"(\d{2,3})\s*m²\s*(?:habitables|utiles)?", title) or re.search(r"(\d{2,3})\s*m²\s*(?:habitables|utiles)", desc)
+    land = re.search(r"(?:parcelle|terrain)\s+(?:de\s+|d'environ\s+)?(\d{3,4})\s*m²", desc, re.I)
+    beds = re.search(r"(\d{1,2})\s+[Cc]hambres", full)
+    year = re.search(r"construite? en (\d{4})", desc)
+    photos = re.findall(r'<a href="(https://www\.immobilier-et-compagnie\.fr/media/immobilier_bien/[^"]+-full\.(?:png|jpe?g))"', body)
+    return dict(title=title, city=city.group(1).strip() if city else None, description=desc[:6000],
+                ref=ref.group(1) if ref else None, price=_num(price.group(1)) if price else None,
+                dpe=maes._dpe_class(energy, ges), dpe_value=energy,
+                ges=_ges_class(ges) if ges is not None else None,
+                dpe_date=f"{dpe_date.group(3)}-{dpe_date.group(2)}-{dpe_date.group(1)}" if dpe_date else None,
+                surface_m2=_num(surface.group(1)) if surface else None, land_m2=_num(land.group(1)) if land else None,
+                bedrooms=_num(beds.group(1)) if beds else None, year_built=_num(year.group(1)) if year else None,
+                photo_urls=list(dict.fromkeys(photos)), **_flags(full))
+
+
+def iec_item(client, url, zones, list_price=None):
+    """Fiche détaillée -> item (None si hors zones)."""
+    d = iec_parse_detail(client.get(url).text)
+    z = zones.get(tp.city_key(d["city"]))
+    if not z:
+        return None
+    bid = re.search(r",b(\d+)/?$", url).group(1)
+    price = d.pop("price") or list_price
+    d.pop("ref", None)
+    return dict(d, source=SOURCE, external_id=f"iec:{bid}", url=url, agency="Immobilier & Compagnie",
+                price=price, city=z[0], insee=z[1], postal_code=z[2], raw={"price": price, "id": bid})
+
+
+def fetch_iec(client, crit, known):
+    zones, max_price, out, seen = zone_index(crit), crit["price"]["max"], [], set()
+    for page in range(1, 20):
+        url = f"{IEC_BASE}/nos-bien-a-vendre,c2/" + (f"page-{page}/" if page > 1 else "")
+        r = client.get(url, params={"tri": 3})
+        r.raise_for_status()
+        cards = [c for c in iec_parse_list(r.text) if c["id"] not in seen]
+        if not cards:
+            break
+        for c in cards:
+            seen.add(c["id"])
+            ext = f"iec:{c['id']}"
+            # Au-delà du budget : gardée seulement si déjà suivie (ajout manuel), pour ne pas la marquer disparue
+            if c["kind"] != "maison" or not zones.get(tp.city_key(c["city"])) or \
+                    ((c["price"] or 0) > max_price and ext not in known):
+                continue
+            base = dict(source=SOURCE, external_id=ext, url=c["url"], agency="Immobilier & Compagnie")
+            if (known.get(ext) or {}).get("price") == c["price"]:
+                out.append(base)
+                continue
+            time.sleep(1.5)
+            item = iec_item(client, c["url"], zones, list_price=c["price"])
+            if item:
+                out.append(item)
+        time.sleep(1)
+    return out
+
+
+AGENCIES = {"refimmo": fetch_refimmo, "croix": fetch_croix, "dreossi": fetch_dreossi, "iec": fetch_iec}
+DETAIL_FETCHERS = {"immobilier-et-compagnie.fr": iec_item}     # ajout manuel d'une annonce par URL
 
 
 def fetch(client, crit, known: dict | None = None, **_):

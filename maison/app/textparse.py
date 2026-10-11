@@ -55,12 +55,17 @@ def detect_type(text) -> str:
     return "unknown"
 
 
+NO_WORKS = re.compile(r"\b(?:sans|aucuns?|pas de|nul besoin de)\s+(?:aucuns?\s+|gros\s+|de\s+)?trava+ux(?:\s+a\s+(?:prevoir|faire))?")
+
+
 def detect_works(text) -> str | None:
     t = norm(text)
-    if re.search(r"travaux a prevoir|a renover|renovation (complete|totale)|a rehabiliter|gros travaux", t):
+    negated = bool(NO_WORKS.search(t))
+    t = NO_WORKS.sub(" ", t)          # « aucun travaux à prévoir » ne doit pas matcher « travaux à prévoir »
+    if re.search(r"trava+ux a prevoir|a renover|renovation (complete|totale)|a rehabiliter|gros trava+ux", t):
         return "heavy"
-    if re.search(r"rafraichissement|a rafraichir|quelques travaux|petits travaux", t):
+    if re.search(r"rafraichissement|a rafraichir|quelques trava+ux|petits trava+ux", t):
         return "light"
-    if re.search(r"aucuns? travaux|pas de travaux|sans travaux|refaite? a neuf|\brenovee?\b|clef? en main", t):
+    if negated or re.search(r"refaite? a neuf|\brenovee?\b|clef? en main|posez (?:juste )?vos (?:meubles|valises)", t):
         return "none"
     return None
