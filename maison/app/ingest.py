@@ -2,7 +2,7 @@ import json
 from app.scoring import fingerprint
 
 FIELDS = ("url", "title", "description", "price", "surface_m2", "land_m2", "rooms", "bedrooms",
-          "property_type", "city", "postal_code", "insee", "dpe", "ges", "dpe_value", "dpe_date",
+          "property_type", "city", "postal_code", "address", "insee", "dpe", "ges", "dpe_value", "dpe_date",
           "year_built", "has_garage", "has_garden", "has_bathtub", "works", "agency", "lat", "lon",
           "geo_precision", "published_at")
 
@@ -21,7 +21,11 @@ def upsert(conn, item: dict) -> tuple[int, bool]:
     keep_exact = ("lat", "lon", "geo_precision")
     updates = ", ".join(
         (f"{c} = CASE WHEN listing.geo_precision = 'exact' THEN listing.{c} ELSE COALESCE(EXCLUDED.{c}, listing.{c}) END"
-         if c in keep_exact else f"{c} = COALESCE(EXCLUDED.{c}, listing.{c})")
+         if c in keep_exact else
+         ("address = CASE WHEN listing.geo_precision = 'exact' "
+          "OR listing.enrichment->>'address_method' = 'user' "
+          "THEN listing.address ELSE COALESCE(EXCLUDED.address, listing.address) END"
+          if c == "address" else f"{c} = COALESCE(EXCLUDED.{c}, listing.{c})"))
         for c in vals if c not in ("price", "photo_urls"))
     sql = f"""
     INSERT INTO listing ({", ".join(cols)}) VALUES ({insert_vals})

@@ -76,6 +76,7 @@ def test_fetch_city_new_then_known(monkeypatch):
     assert "pap:465502456" in ids and len(ids) == 13
     it = next(i for i in items if i["external_id"] == "pap:465502456")
     assert it["price"] == 275000 and it["raw"]["city"] == "Wambrechies" and it["raw"]["fetched_at"]
+    assert it["raw"]["detail_version"] == 2
     # 2e passage : annonces connues et fraîches -> simples « vues », aucune fiche re-téléchargée
     known = {i["external_id"]: i["raw"] for i in items}
     session2 = FakeSession()
@@ -88,6 +89,11 @@ def test_fetch_city_new_then_known(monkeypatch):
     session3 = FakeSession()
     pap.fetch_city(session3, "Wambrechies", crit["zones"]["Wambrechies"], stale, set())
     assert sum("/annonces/" in u for u in session3.calls) == 13
+    # Anciennes lignes sans version du détail : refaire une seule fois la fiche pour importer la rue.
+    legacy = {k: {key: val for key, val in v.items() if key != "detail_version"} for k, v in known.items()}
+    session4 = FakeSession()
+    pap.fetch_city(session4, "Wambrechies", crit["zones"]["Wambrechies"], legacy, set())
+    assert sum("/annonces/" in u for u in session4.calls) == 13
 
 
 def test_fetch_keeps_known_when_city_fails(monkeypatch):

@@ -24,6 +24,7 @@ BASE = "https://www.pap.fr"
 DELAY = 1.2          # entre deux requêtes (PAP renvoie 429 si on accélère)
 MAX_PAGES = 8        # ~10 annonces par page (les annonces locales sont en tête)
 REFRESH_DAYS = 3     # re-télécharge la fiche d'une annonce connue après N jours (prix, photos)
+DETAIL_VERSION = 2   # version du parsing qui importe notamment la rue dans listing.address
 IMPERSONATE = "chrome"
 AD_URL = re.compile(r"/annonces/[a-z-]+-(\d{5})-r(\d+)")
 _gid_cache: dict[str, int] = {}
@@ -178,6 +179,8 @@ def _int(s):
 
 
 def _is_stale(raw: dict) -> bool:
+    if raw.get("detail_version") != DETAIL_VERSION:
+        return True
     try:
         fetched = datetime.fromisoformat(raw.get("fetched_at"))
     except (TypeError, ValueError):
@@ -216,7 +219,7 @@ def fetch_city(session, city: str, zone: dict, known: dict, seen: set,
                 continue
             item.update(source="pap", external_id=ext, url=card["url"],
                         raw={"fetched_at": datetime.now(timezone.utc).isoformat(), "city": city,
-                             "price": item.get("price")})
+                             "price": item.get("price"), "detail_version": DETAIL_VERSION})
             for k in ("city", "postal_code", "surface_m2", "rooms", "bedrooms", "dpe"):
                 if not item.get(k) and card.get(k):
                     item[k] = card[k]                                              # repli sur la carte

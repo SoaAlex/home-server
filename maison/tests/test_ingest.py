@@ -34,6 +34,21 @@ def test_exact_position_not_overwritten_by_blurred(dburl):
     assert (row["lat"], row["lon"], row["geo_precision"]) == (50.5, 3.5, "exact")
 
 
+def test_source_address_is_ingested_but_user_address_stays_locked(dburl):
+    source = L(source="pap", external_id="pap-address-lock", address="Rue Source, 59118 Wambrechies")
+    with db.connect(dburl) as conn:
+        lid, _ = upsert(conn, source)
+        row = conn.execute("SELECT address FROM listing WHERE id=%s", (lid,)).fetchone()
+        assert row["address"] == "Rue Source, 59118 Wambrechies"
+
+        conn.execute("UPDATE listing SET address=%s, geo_precision='exact', "
+                     "enrichment = enrichment || jsonb_build_object('address_method','user') WHERE id=%s",
+                     ("218 Rue du Château Valois, 59118 Wambrechies", lid))
+        upsert(conn, {**source, "address": "Rue Source Modifiée, 59118 Wambrechies"})
+        row = conn.execute("SELECT address FROM listing WHERE id=%s", (lid,)).fetchone()
+    assert row["address"] == "218 Rue du Château Valois, 59118 Wambrechies"
+
+
 def test_mark_gone(dburl):
     with db.connect(dburl) as conn:
         upsert(conn, L())
