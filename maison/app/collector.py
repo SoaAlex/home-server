@@ -62,18 +62,20 @@ def postprocess(conn, client, crit, lid):
     if not row["photos"] and row["photo_urls"]:
         upd["photos"] = Jsonb(photos.download(client, lid, row["photo_urls"], settings.DATA_DIR / "photos", limit=10))
     insee = row["insee"]
-    if row["lat"] is None and row["address"] and row["city"]:
+    if (row["address"] and row["city"] and row["geo_precision"] != "exact"
+            and (row["lat"] is None or row["geo_precision"] in (None, "city"))):
         # adresse de rue fournie par la source (PAP) : position au niveau rue/numéro si la BAN reconnaît
         gs = geo.geocode(client, row["address"], citycode=insee)
         if gs and gs["type"] in ("housenumber", "street"):
             upd.update(lat=gs["lat"], lon=gs["lon"],
-                       geo_precision="exact" if gs["type"] == "housenumber" else "approx")
+                       geo_precision="exact" if gs["type"] == "housenumber" else "approx",
+                       commute=None)
     if (not insee or row["lat"] is None) and row["city"]:
         g = geo.geocode(client, f"{row['city']} {row['postal_code'] or ''}".strip(), kind="municipality")
         if g:
             if not insee:
                 insee = upd["insee"] = g["citycode"]
-            if row["lat"] is None:
+            if row["lat"] is None and upd.get("lat") is None:
                 upd.update(lat=g["lat"], lon=g["lon"], geo_precision="city")
     enr = row["enrichment"] or {}
     if insee and not row["address"] and not enr.get("ademe_tried") and (row["dpe_value"] or row["dpe_date"]):
