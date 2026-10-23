@@ -97,6 +97,7 @@ def main(
 ) -> int:
     args = _parser().parse_args(argv)
     today = today or datetime.now(ZoneInfo("Europe/Paris")).date()
+    config = None
     try:
         config = load_config(env)
         if args.command == "quittance":
@@ -111,7 +112,20 @@ def main(
         )
     except ConfigError as exc:
         print(f"Configuration : {exc}")
+        _alert(config, args, today, f"configuration : {exc}", sender)
         return 2
     except (OrangePortalError, FileExistsError, ValueError, RuntimeError, OSError) as exc:
         print(f"Erreur : {exc}")
+        _alert(config, args, today, str(exc), sender)
         return 1
+
+
+def _alert(config: Config | None, args, today: date, reason: str, sender) -> None:
+    """A failed monthly run must not stay silent: best-effort text alert on Discord."""
+    if config is None or args.command != "monthly" or args.dry_run or args.no_notify:
+        return
+    try:
+        year, month = _month(args.month, today)
+        sender(config.discord_webhook_url, f"❌ eurl-frais monthly {year:04d}-{month:02d} a échoué : {reason}"[:1900], [])
+    except Exception as exc:  # the alert itself must never hide the original error
+        print(f"Alerte Discord impossible : {type(exc).__name__}")

@@ -159,6 +159,16 @@ def test_default_month_is_the_previous_month(env):
     assert downloader.calls == [(2026, 9)]
 
 
+def test_monthly_crash_posts_an_alert_on_discord(env):
+    (load_config(env).loyer_dir / "QUITTANCE DE LOYER.docx").unlink()
+    sender = Sender()
+
+    assert main(["monthly", "--month", "2026-09"], env=env, today=TODAY,
+                downloader=downloader_for(*TWO_INVOICES), sender=sender) == 1
+    (content, files), = sender.calls
+    assert content.startswith("❌") and "2026-09" in content and files == []
+
+
 def test_quittance_command_writes_a_corrected_copy_and_never_overwrites(env):
     args = ["quittance", "--month", "2026-02", "--payment-date", "2026-03-06", "--issued-on", "2026-03-06",
             "--output", "LOYER/QUITTANCE DE LOYER FEVRIER - CORRIGEE.pdf"]
