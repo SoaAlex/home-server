@@ -2,10 +2,7 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-from pypdf import PdfReader
-
 from eurl_frais.invoice_parser import OrangeInvoice
-from eurl_frais.report_pdf import generate_report_pdf
 from eurl_frais.summary import build_summary
 
 FIXED = (("Gaz", Decimal("10.00")), ("Électricité", Decimal("5.00")))
@@ -44,35 +41,3 @@ def test_summary_is_incomplete_when_an_expected_invoice_is_missing():
 
     assert result.complete is False
     assert "1 facture(s) Orange sur 2" in result.status_text
-
-
-def test_report_pdf_lists_both_tiime_notes_and_vat_rule(tmp_path):
-    output = tmp_path / "RAPPORTS" / "RAPPORT_FRAIS_2026-09.pdf"
-
-    generate_report_pdf(
-        summary([invoice("OR-1", "49.99"), invoice("OR-2", "15.99", "mobile")]), output,
-        generated_on=date(2026, 10, 10), receipt_name="QUITTANCE DE LOYER SEPTEMBRE 2026.pdf",
-        payment_date=date(2026, 10, 6),
-    )
-
-    text = " ".join(PdfReader(output).pages[0].extract_text().split())
-    assert "COMPLET" in text and "INCOMPLET" not in text
-    assert "Charges Septembre" in text and "67,78 €" in text
-    assert "Loyer Septembre" in text and "200,00 €" in text
-    assert "OR-1" in text and "39,99 €" in text and "12,79 €" in text
-    assert "TVA" in text and "HT = TTC" in text
-    assert "267,78 €" in text
-    assert "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf" in text
-
-
-def test_report_pdf_flags_incomplete_month_and_problems(tmp_path):
-    output = tmp_path / "rapport.pdf"
-
-    generate_report_pdf(
-        summary([invoice("OR-1", "49.99")], problems=("scan.pdf : PDF sans texte",)), output,
-        generated_on=date(2026, 10, 10), receipt_name=None, payment_date=None,
-    )
-
-    text = " ".join(PdfReader(output).pages[0].extract_text().split())
-    assert "INCOMPLET" in text
-    assert "scan.pdf" in text

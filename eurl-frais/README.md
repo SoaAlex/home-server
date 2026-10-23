@@ -8,10 +8,10 @@ Conteneur CLI (aucun port publié) lancé le 10 de chaque mois par une tâche He
 2. émet la quittance du loyer de M (`EURL/LOYER/QUITTANCE DE LOYER <MOIS> <AAAA>.pdf`) en recopiant le modèle Word
    `LOYER/QUITTANCE DE LOYER.docx` (textes, gras/italique, filets, signature) ; seules la période, la date de paiement
    (par défaut le `RENT_PAYMENT_DAY` de M+1) et la date d'émission (jour du passage) changent ;
-3. produit `EURL/CHARGES/RAPPORTS/RAPPORT_FRAIS_AAAA-MM.pdf` : note « Charges <Mois> » = quote-part `ORANGE_SHARE`
-   du TTC de chaque facture Orange (arrondie au centime) + forfaits gaz/électricité, note « Loyer <Mois> », **HT = TTC,
-   TVA 0** ;
-4. publie le résumé et les PDF (rapport, quittance, factures) sur Discord, une seule fois par mois complet.
+3. publie le rapport directement dans un message Discord (pas de PDF de rapport) : note « Charges <Mois> » =
+   quote-part `ORANGE_SHARE` du TTC de chaque facture Orange (arrondie au centime) + forfaits gaz/électricité,
+   note « Loyer <Mois> », **HT = TTC, TVA 0**, avec la quittance et les factures Orange en pièces jointes. Un mois
+   complet n'est publié qu'une fois ; un mois incomplet est signalé (⚠️) et republié une fois complété.
 
 Aucune écriture dans Tiime, pas d'indemnités kilométriques.
 
