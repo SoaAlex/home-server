@@ -72,6 +72,17 @@ def next_month(year: int, month: int) -> tuple[int, int]:
     return (year + 1, 1) if month == 12 else (year, month + 1)
 
 
+def orange_invoice_month(year: int, month: int) -> tuple[int, int]:
+    """For expenses of M, select invoices issued in M+1 (the regular report's current month).
+    An explicit historical expense month keeps the same mapping, even when rerun later."""
+    return next_month(year, month)
+
+
+def format_percent(value: Decimal) -> str:
+    """80.00 -> '80', 75.50 -> '75,5', 100 -> '100' (French decimal comma, no trailing zeros)."""
+    return f"{Decimal(value).quantize(CENT):f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
 def parse_year_month(value: str) -> tuple[int, int]:
     match = re.fullmatch(r"(\d{4})-(\d{2})", value.strip())
     if not match:

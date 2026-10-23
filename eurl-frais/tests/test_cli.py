@@ -30,7 +30,7 @@ def env(tmp_path):
     }
 
 
-def orange_pdf(directory, name, *, issued="05/09/2026", total="49,99", ref="OR-TEST-0001", service="Livebox Fibre"):
+def orange_pdf(directory, name, *, issued="05/10/2026", total="49,99", ref="OR-TEST-0001", service="Livebox Fibre"):
     return write_pdf(directory / name, [f"Facture n° {ref}", f"Date d'émission : {issued}",
                                         f"Abonnement {service}", f"Total à payer : {total} €"])
 
@@ -47,7 +47,7 @@ def downloader_for(*invoices):
             portal_total = spec.pop("portal_total", spec.get("total", "49,99"))
             service = "mobile" if "mobile" in spec.get("service", "") else "internet"
             path = orange_pdf(download_dir, f"dl-{index}.pdf", **spec)
-            issued = datetime.strptime(spec.get("issued", "05/09/2026"), "%d/%m/%Y").date()
+            issued = datetime.strptime(spec.get("issued", "05/10/2026"), "%d/%m/%Y").date()
             result.append(PortalInvoice(path, service, issued, Decimal(portal_total.replace(",", ".")), "c1"))
         return result
 
@@ -78,16 +78,32 @@ def test_complete_month_archives_everything_and_notifies_once(env):
     assert run(env, sender=sender) == 0
 
     orange = sorted(p.name for p in (load_config(env).orange_dir).iterdir())
-    assert orange == ["2026-09-05_Orange_internet_49,99EUR.pdf", "2026-09-05_Orange_mobile_15,99EUR.pdf"]
+    assert orange == ["2026-10-05_Orange_internet_49,99EUR.pdf", "2026-10-05_Orange_mobile_15,99EUR.pdf"]
     receipt = load_config(env).loyer_dir / "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf"
     receipt_text = " ".join(PdfReader(receipt).pages[0].extract_text().split())
     assert "Date du paiement : 06/10/2026" in receipt_text and "le 10/10/2026." in receipt_text
     assert not (load_config(env).charges_dir / "RAPPORTS").exists()  # the Discord message is the report
-    (content, files), = sender.calls
-    assert files == ["QUITTANCE DE LOYER SEPTEMBRE 2026.pdf", "2026-09-05_Orange_internet_49,99EUR.pdf",
-                     "2026-09-05_Orange_mobile_15,99EUR.pdf"]
+    (content, files), *comments = sender.calls
+    assert files == ["QUITTANCE DE LOYER SEPTEMBRE 2026.pdf", "2026-10-05_Orange_internet_49,99EUR.pdf",
+                     "2026-10-05_Orange_mobile_15,99EUR.pdf"]
     assert "COMPLET" in content and "67,78" in content and "200,00" in content and "267,78" in content
-    assert "Orange Internet — facture du 05/09/2026 : 49,99" in content and "39,99" in content and "12,79" in content
+    assert "Orange Internet — facture du 05/10/2026 : 49,99" in content and "39,99" in content and "12,79" in content
+    # One plain message per Tiime comment, right after the report: Discord mobile copies whole messages only.
+    assert comments == [("INTERNET PRORATA 80/20", []), ("MOBILE PRORATA 80/20", [])]
+    assert "Commentaires Tiime" in content
+
+
+def test_expenses_use_the_orange_invoices_of_the_following_month(env):
+    """Expenses of M = Orange invoices issued in M+1 (Tiime « Charges Aout » used the September invoices)."""
+    config = load_config(env)
+    config.orange_dir.mkdir()
+    orange_pdf(config.orange_dir, "deja-dans-charges-aout.pdf", issued="05/09/2026", total="77,77")
+    sender, downloader = Sender(), downloader_for(*TWO_INVOICES)
+
+    assert run(env, sender=sender, downloader=downloader) == 0
+
+    assert downloader.calls == [(2026, 10)]
+    assert "05/10/2026" in sender.calls[0][0] and "77,77" not in sender.calls[0][0]
 
 
 def test_portal_amount_absent_from_the_pdf_text_is_quarantined(env):
@@ -96,7 +112,7 @@ def test_portal_amount_absent_from_the_pdf_text_is_quarantined(env):
 
     assert run(env, sender=sender, downloader=downloader_for(wrong, TWO_INVOICES[1])) == 3
 
-    assert sorted(p.name for p in load_config(env).orange_dir.iterdir()) == ["2026-09-05_Orange_mobile_15,99EUR.pdf"]
+    assert sorted(p.name for p in load_config(env).orange_dir.iterdir()) == ["2026-10-05_Orange_mobile_15,99EUR.pdf"]
     assert "49,99" in sender.calls[0][0] and "a-verifier" in sender.calls[0][0]
 
 
@@ -126,11 +142,11 @@ def test_pdf_without_text_layer_keeps_the_portal_amount(env):
         pdf.rect(50, 50, 100, 100)
         pdf.save()
         mobile = orange_pdf(download_dir, "m.pdf", total="15,99", service="forfait mobile")
-        return [PortalInvoice(blank, "internet", date(2026, 9, 7), Decimal("44.44"), "c1"),
-                PortalInvoice(mobile, "mobile", date(2026, 9, 5), Decimal("15.99"), "c2")]
+        return [PortalInvoice(blank, "internet", date(2026, 10, 7), Decimal("44.44"), "c1"),
+                PortalInvoice(mobile, "mobile", date(2026, 10, 5), Decimal("15.99"), "c2")]
 
     assert run(env, downloader=download) == 0
-    assert "2026-09-07_Orange_internet_44,44EUR.pdf" in [p.name for p in load_config(env).orange_dir.iterdir()]
+    assert "2026-10-07_Orange_internet_44,44EUR.pdf" in [p.name for p in load_config(env).orange_dir.iterdir()]
 
 
 def test_second_run_does_not_resend(env):
@@ -142,16 +158,18 @@ def test_second_run_does_not_resend(env):
 
 
 def test_incomplete_month_warns_then_completes_with_a_manual_pdf(env):
-    sender = Sender()
+    first, second = Sender(), Sender()
 
-    assert run(env, sender=sender, downloader=downloader_for(TWO_INVOICES[0])) == 3
-    assert "INCOMPLET" in sender.calls[0][0]
-    assert "provisoire" in sender.calls[0][0]
+    assert run(env, sender=first, downloader=downloader_for(TWO_INVOICES[0])) == 3
+    assert "INCOMPLET" in first.calls[0][0]
+    assert "provisoire" in first.calls[0][0]
+    assert first.calls[1:] == [("INTERNET PRORATA 80/20", [])]
 
     orange_pdf(load_config(env).orange_dir, "facture mobile.pdf", ref="OR-MOB-0002", total="15,99", service="forfait mobile")
-    assert run(env, sender=sender, use_orange=False) == 0
-    assert "COMPLET" in sender.calls[1][0] and "INCOMPLET" not in sender.calls[1][0]
-    assert "provisoire" not in sender.calls[1][0]
+    assert run(env, sender=second, use_orange=False) == 0
+    assert "COMPLET" in second.calls[0][0] and "INCOMPLET" not in second.calls[0][0]
+    assert "provisoire" not in second.calls[0][0]
+    assert [content for content, _files in second.calls[1:]] == ["INTERNET PRORATA 80/20", "MOBILE PRORATA 80/20"]
 
 
 def test_dry_run_writes_nothing_and_sends_nothing(env):
@@ -209,7 +227,16 @@ def test_default_month_is_the_previous_month(env):
     downloader = downloader_for(*TWO_INVOICES)
 
     assert main(["monthly", "--no-notify"], env=env, today=date(2026, 10, 23), downloader=downloader) == 0
-    assert downloader.calls == [(2026, 9)]
+    assert downloader.calls == [(2026, 10)]  # September expenses, invoices of the current month
+
+
+def test_orange_command_takes_the_expense_month(env, capsys):
+    downloader = downloader_for(*TWO_INVOICES)
+
+    assert main(["orange", "--month", "2026-09"], env=env, today=TODAY, downloader=downloader) == 0
+
+    assert downloader.calls == [(2026, 10)]
+    assert "émises en octobre 2026 (frais de septembre 2026)" in capsys.readouterr().out
 
 
 def test_monthly_crash_posts_an_alert_on_discord(env):
