@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from .config import Config, ConfigError, load_config
 from .discord_delivery import send_discord
-from .domain import parse_year_month, previous_month
+from .domain import month_name_fr, orange_invoice_month, parse_year_month, previous_month
 from .monthly import EXIT_INCOMPLETE, EXIT_OK, fetch_orange, run_lock, run_monthly
 from .orange_portal import OrangePortalError, download_invoices
 from .rent_pdf import default_payment_date, generate_rent_receipt, rent_receipt_filename
@@ -35,8 +35,8 @@ def _parser() -> argparse.ArgumentParser:
     receipt.add_argument("--issued-on", type=date.fromisoformat, help="date d'émission (défaut : aujourd'hui)")
     receipt.add_argument("--output", help="chemin sous EURL, ex. 'LOYER/QUITTANCE DE LOYER FEVRIER - CORRIGEE.pdf'")
 
-    orange = commands.add_parser("orange", help="télécharger et archiver seulement les factures Orange d'un mois")
-    orange.add_argument("--month", help="mois AAAA-MM (défaut : mois précédent)")
+    orange = commands.add_parser("orange", help="télécharger et archiver seulement les factures Orange d'un mois de frais")
+    orange.add_argument("--month", help="mois des frais AAAA-MM (défaut : mois précédent) ; factures émises le mois suivant")
     orange.add_argument("--debug", action="store_true", help="captures du portail Orange dans state/orange/debug")
     return parser
 
@@ -75,9 +75,12 @@ def _orange(config: Config, args, today: date, downloader) -> int:
         print("Erreur : ORANGE_USERNAME / ORANGE_PASSWORD absents du .env")
         return 2
     year, month = _month(args.month, today)
+    invoice_year, invoice_month = orange_invoice_month(year, month)
+    print(f"Factures Orange émises en {month_name_fr(invoice_month)} {invoice_year} "
+          f"(frais de {month_name_fr(month)} {year})")
     with run_lock(config.state_dir):
-        archived, problems = fetch_orange(config, year, month, downloader, debug=args.debug)
-    invoices, parse_problems = collect_month_invoices(config.orange_dir, year, month)
+        archived, problems = fetch_orange(config, invoice_year, invoice_month, downloader, debug=args.debug)
+    invoices, parse_problems = collect_month_invoices(config.orange_dir, invoice_year, invoice_month)
     print(f"Nouvelles factures archivées : {archived or 'aucune'}")
     for invoice, path in invoices:
         print(f"- {path.name} : {invoice.service}, facture {invoice.invoice_id or 'sans n°'} du "

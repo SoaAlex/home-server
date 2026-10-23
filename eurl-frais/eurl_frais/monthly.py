@@ -15,7 +15,7 @@ from typing import Callable, Iterator
 
 from .config import Config
 from .discord_delivery import send_discord
-from .domain import format_eur, month_name_fr
+from .domain import format_eur, month_name_fr, orange_invoice_month
 from .invoice_parser import InvoiceParseError, OrangeInvoice, pdf_text
 from .orange_portal import OrangePortalError, download_invoices
 from .rent_pdf import default_payment_date, generate_rent_receipt, rent_receipt_filename, template_rent_amount
@@ -62,7 +62,7 @@ def _quarantine(config: Config, path: Path) -> None:
 
 
 def fetch_orange(config: Config, year: int, month: int, downloader=download_invoices, *, debug: bool = False):
-    """Download the month's invoices and archive them. Returns (new files, problems).
+    """Download the invoices issued in (year, month) and archive them. Returns (new files, problems).
 
     Date, service and amount come from the customer area; when the PDF has a text layer it must contain
     that amount, otherwise the file is quarantined instead of being counted.
@@ -75,7 +75,7 @@ def fetch_orange(config: Config, year: int, month: int, downloader=download_invo
         found = downloader(config.orange_username, config.orange_password, config.state_dir / "orange",
                            Path(tmp), year, month, debug=debug)
         if not found:
-            problems.append(f"Orange : aucune facture de {month_name_fr(month)} {year} sur l'espace client")
+            problems.append(f"Orange : aucune facture émise en {month_name_fr(month)} {year} sur l'espace client")
         seen: set[tuple] = set()
         for item in found:
             label = f"{SERVICE_LABELS.get(item.service, 'Orange')} du {item.issue_date:%d/%m/%Y}"
@@ -141,6 +141,8 @@ def discord_message(summary: MonthlySummary, *, receipt_name: str | None, paymen
         lines += ["", "⚠️ Points d'attention :"] + [f"• {problem}" for problem in summary.problems]
     if receipt_name or summary.orange_lines:
         lines += ["", "📎 Justificatifs joints : quittance et factures Orange (archivés dans EURL/LOYER et EURL/CHARGES/ORANGE)."]
+    if summary.tiime_comments:
+        lines.append("💬 Commentaires Tiime des lignes Orange : à copier dans les messages suivants.")
     return "\n".join(lines)
 
 
@@ -169,12 +171,13 @@ def run_monthly(
             return EXIT_OK
 
         problems: list[str] = []
+        invoice_year, invoice_month = orange_invoice_month(year, month)
         if not dry_run:
             config.orange_dir.mkdir(parents=True, exist_ok=True)  # also the manual drop-off folder
         if use_orange and not dry_run:
             if config.has_orange_credentials:
                 try:
-                    archived, orange_problems = fetch_orange(config, year, month, downloader, debug=debug)
+                    archived, orange_problems = fetch_orange(config, invoice_year, invoice_month, downloader, debug=debug)
                     problems += orange_problems
                     out(f"Orange : {len(archived)} nouvelle(s) facture(s) archivée(s) {archived}")
                 except OrangePortalError as exc:
@@ -184,7 +187,7 @@ def run_monthly(
             else:
                 problems.append("Orange : identifiants absents du .env — seules les factures déjà déposées "
                                 "dans CHARGES/ORANGE sont prises en compte")
-        invoices, parse_problems = collect_month_invoices(config.orange_dir, year, month)
+        invoices, parse_problems = collect_month_invoices(config.orange_dir, invoice_year, invoice_month)
         problems += parse_problems
 
         rent_amount = template_rent_amount(config.template_path)
@@ -213,17 +216,20 @@ def run_monthly(
             rent_amount=rent_amount, expected_invoices=config.orange_expected_invoices, problems=problems,
         )
         message = discord_message(summary, receipt_name=receipt_path.name if receipt_ready else None, payment_date=payment)
+        console = "\n".join([message, *(f"💬 {comment}" for comment in summary.tiime_comments)])
         if dry_run:
-            out("[simulation] aucun fichier écrit, aucun envoi Discord.\n" + message)
+            out("[simulation] aucun fichier écrit, aucun envoi Discord.\n" + console)
             return EXIT_OK if summary.complete else EXIT_INCOMPLETE
 
         complete = summary.complete and receipt_ready
         if notify:  # the Discord message is the report; PDFs attached are the receipts for Tiime
             files = ([receipt_path] if receipt_ready else []) + [line.path for line in summary.orange_lines]
             sender(config.discord_webhook_url, message, files)
+            for comment in summary.tiime_comments:  # plain text, one per message: mobile copies whole messages
+                sender(config.discord_webhook_url, comment, [])
             if complete:
                 _write_state(sent_path, {"sent_at": datetime.now().isoformat(timespec="seconds"),
                                          "charges_total": str(summary.charges_total),
                                          "rent": str(summary.rent_amount)})
-        out(message)
+        out(console)
         return EXIT_OK if complete else EXIT_INCOMPLETE

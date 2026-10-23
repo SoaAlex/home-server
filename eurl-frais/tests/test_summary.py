@@ -2,6 +2,8 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from eurl_frais.invoice_parser import OrangeInvoice
 from eurl_frais.summary import build_summary
 
@@ -15,10 +17,10 @@ def invoice(ref, total, service="internet"):
     )
 
 
-def summary(invoices, expected=2, problems=()):
+def summary(invoices, expected=2, problems=(), share="0.80"):
     return build_summary(
         2026, 9, [(inv, Path(f"/eurl/CHARGES/ORANGE/{inv.invoice_id}.pdf")) for inv in invoices],
-        share=Decimal("0.80"), fixed_charges=FIXED, rent_amount=Decimal("200.00"),
+        share=Decimal(share), fixed_charges=FIXED, rent_amount=Decimal("200.00"),
         expected_invoices=expected, problems=problems,
     )
 
@@ -41,3 +43,17 @@ def test_summary_is_incomplete_when_an_expected_invoice_is_missing():
 
     assert result.complete is False
     assert "1 facture(s) Orange sur 2" in result.status_text
+
+
+def test_tiime_comments_one_per_service_in_report_order():
+    result = summary([invoice("OR-1", "49.99"), invoice("OR-2", "15.99", "mobile"), invoice("OR-3", "9.99", "mobile")])
+
+    assert result.tiime_comments == ("INTERNET PRORATA 80/20", "MOBILE PRORATA 80/20")
+
+
+@pytest.mark.parametrize("share,ratio,percent", [("0.755", "75,5/24,5", "75,5 %"), ("1", "100/0", "100 %")])
+def test_share_wording_follows_the_configured_share(share, ratio, percent):
+    result = summary([invoice("OR-1", "49.99", "orange")], share=share)
+
+    assert result.tiime_comments == (f"ORANGE PRORATA {ratio}",)
+    assert result.share_percent == percent

@@ -1,4 +1,4 @@
-"""Monthly figures shared by the PDF report and the Discord message."""
+"""Monthly figures of the Discord report."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,8 +7,10 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Iterable
 
-from .domain import charges_total, money, month_name_fr, month_period, next_month, share_of
+from .domain import charges_total, format_percent, money, month_name_fr, month_period, next_month, share_of
 from .invoice_parser import OrangeInvoice
+
+TIIME_LABELS = {"internet": "INTERNET", "mobile": "MOBILE"}
 
 
 @dataclass(frozen=True)
@@ -43,7 +45,15 @@ class MonthlySummary:
 
     @property
     def share_percent(self) -> str:
-        return format(self.orange_share * 100, "f").rstrip("0").rstrip(".").replace(".", ",") + " %"
+        return f"{format_percent(self.orange_share * 100)} %"
+
+    @property
+    def tiime_comments(self) -> tuple[str, ...]:
+        """Comment of each Orange line in Tiime, e.g. « INTERNET PRORATA 80/20 » (once per service)."""
+        professional = self.orange_share * 100
+        ratio = f"{format_percent(professional)}/{format_percent(100 - professional)}"
+        labels = (TIIME_LABELS.get(line.invoice.service, "ORANGE") for line in self.orange_lines)
+        return tuple(dict.fromkeys(f"{label} PRORATA {ratio}" for label in labels))
 
     @property
     def orange_total(self) -> Decimal:
