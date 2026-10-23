@@ -1,31 +1,31 @@
+from datetime import date
+
 import pytest
 
-from eurl_frais.orange_portal import ManualAuthRequired, manual_auth_required, month_matches, select_invoice_links
+from eurl_frais.orange_portal import ManualAuthRequired, _service_from_labels, invoice_label_date, manual_auth_required
 
 
-def test_month_matches_french_names_and_numeric_dates():
-    assert month_matches("Facture du 5 septembre 2026", 2026, 9)
-    assert month_matches("Facture du 05/09/2026 - 56,22 €", 2026, 9)
-    assert month_matches("Facture août 2026", 2026, 8)
-    assert month_matches("facture aout 2026", 2026, 8)
-    assert not month_matches("Facture du 5 septembre 2025", 2026, 9)
-    assert not month_matches("Facture du 05/10/2026", 2026, 9)
+@pytest.mark.parametrize("labels,service", [
+    # Labels of the « Factures » links seen on espace-client.orange.fr (23/10/2026)
+    ("Consulter votre facture Forfait 100Go 5G | Factures6 octobre 2026 : 21,00 €Consultez, gérez", "mobile"),
+    ("Consulter votre facture Livebox Fibre | Factures5 octobre 2026 : 33,33 €", "internet"),
+    ("Factures de Forfait mobile de Test", "mobile"),
+    ("Factures de Offre internet de Test", "internet"),
+    ("Factures 6 octobre 2026 : 21,00 €", "orange"),
+])
+def test_service_from_labels(labels, service):
+    assert _service_from_labels(labels) == service
 
 
-def test_selects_only_download_links_of_the_requested_month():
-    links = [
-        {"index": 0, "href": "https://espace-client.orange.fr/x/facture.pdf?id=1", "text": "Télécharger",
-         "context": "Facture du 05/09/2026 56,22 €"},
-        {"index": 1, "href": "https://espace-client.orange.fr/x/facture.pdf?id=0", "text": "Télécharger",
-         "context": "Facture du 05/08/2026 56,22 €"},
-        {"index": 2, "href": "https://espace-client.orange.fr/x/detail", "text": "Voir le détail",
-         "context": "Facture du 05/09/2026 56,22 €"},
-        {"index": 3, "href": "", "text": "Télécharger la facture (PDF)", "context": "Facture mobile du 12 septembre 2026"},
-    ]
-
-    selected = select_invoice_links(links, 2026, 9)
-
-    assert [link["index"] for link in selected] == [0, 3]
+@pytest.mark.parametrize("label,expected", [
+    ("Voir la facture du 7 septembre 2026 au format PDF", date(2026, 9, 7)),
+    ("Voir la facture du 1er août 2026 au format PDF", date(2026, 8, 1)),
+    ("Voir la facture du 8 décembre 2025 au format PDF", date(2025, 12, 8)),
+    ("Consulter la dernière facture", None),
+    ("Voir la facture du 7 brumaire 2026 au format PDF", None),
+])
+def test_invoice_label_date(label, expected):
+    assert invoice_label_date(label) == expected
 
 
 @pytest.mark.parametrize("url,text", [

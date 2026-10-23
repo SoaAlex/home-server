@@ -30,6 +30,12 @@ LOGIN = """<html><body><h1>Espace Client</h1>
            encodeURIComponent(document.getElementById('login').value)">Continuer</button></body></html>"""
 
 
+PROMO = """<html><body><h1>Activez l’authentification renforcée</h1>
+<button type="button" onclick="window.activated = true">Activer</button>
+<button type="button" onclick="location.href='https://espace-client.orange.fr/accueil?promo=later'">Plus tard</button>
+</body></html>"""
+
+
 def password_page(identity, *, chip=True):
     return PASSWORD_STEP.format(identity=identity, chip=CHANGE_ACCOUNT.format(identity=identity) if chip else "")
 
@@ -75,6 +81,18 @@ def test_other_pre_identified_account_is_switched_to_the_configured_login(browse
     _login(_Session(page, None), "0612345678", "pw")
 
     assert page.url == "https://espace-client.orange.fr/accueil?l=0612345678"
+
+
+def test_optional_strong_auth_promotion_is_postponed_never_activated(browser_page):
+    page, pages = browser_page
+    pages["https://login.orange.fr/password"] = password_page("l.user@example.test").replace(
+        "https://espace-client.orange.fr/accueil?l=", "https://login.orange.fr/promo/aba?l=")
+    pages["https://login.orange.fr/promo/aba"] = PROMO
+    page.goto("https://login.orange.fr/password")
+
+    _login(_Session(page, None), "l.user@example.test", "pw")
+
+    assert page.url == "https://espace-client.orange.fr/accueil?promo=later"
 
 
 def test_password_is_never_sent_to_an_unexpected_account(browser_page):
