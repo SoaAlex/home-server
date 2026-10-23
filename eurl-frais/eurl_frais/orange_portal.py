@@ -22,6 +22,8 @@ _HUMAN_CHECKS = (
     "captcha", "pas un robot", "code recu par sms", "code de verification", "saisissez le code",
     "authentification a deux facteurs", "double authentification", "validez la connexion sur votre mobile",
     "mobile connect", "/otp", "/2fa",
+    # "Authentification renforcée" (Orange et moi app): push request to the trusted phone, no password step.
+    "mobile de confiance", "identification avec votre mobile", "/orange-et-moi",
 )
 
 
@@ -36,6 +38,10 @@ class ManualAuthRequired(OrangePortalError):
 def _plain(text: str) -> str:
     decomposed = unicodedata.normalize("NFKD", text.replace("’", "'"))
     return "".join(c for c in decomposed if not unicodedata.combining(c)).lower()
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"[\s.\-]", "", _plain(text))
 
 
 def manual_auth_required(url: str, text: str) -> bool:
@@ -104,13 +110,23 @@ class _Session:
         manual_auth_required(self.page.url, self.body())
 
     def click_text(self, pattern: str, roles=("button", "link")) -> bool:
-        for role in roles:
-            target = self.page.get_by_role(role, name=re.compile(pattern, re.I))
-            if target.count() and target.first.is_visible():
-                target.first.click(timeout=10_000)
-                self.page.wait_for_load_state("domcontentloaded", timeout=30_000)
-                self.page.wait_for_timeout(1_500)
-                return True
+        """Click the first visible control whose accessible name OR visible text matches.
+
+        Orange buttons may carry an aria-label different from their text
+        (text « Valider », accessible name « S‘identifier » with a typographic apostrophe).
+        """
+        regex = re.compile(pattern, re.I)
+        tags = {"button": "button", "link": "a"}
+        candidates = [self.page.get_by_role(role, name=regex) for role in roles]
+        candidates += [self.page.locator(tags[role]).filter(has_text=regex) for role in roles]
+        for target in candidates:
+            for index in range(min(target.count(), 5)):
+                element = target.nth(index)
+                if element.is_visible():
+                    element.click(timeout=10_000)
+                    self.page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                    self.page.wait_for_timeout(1_500)
+                    return True
         return False
 
 
@@ -120,14 +136,57 @@ def _dismiss_cookies(session: _Session) -> None:
     )
 
 
+def _visible(locator) -> bool:
+    try:
+        return bool(locator.count()) and locator.first.is_visible()
+    except Exception:
+        return False
+
+
+def _identity(text: str) -> str:
+    """Comparable login: lower case, no separators, +33/0033 phone prefix -> 0."""
+    compact = _compact(text)
+    return re.sub(r"^(\+33|0033)", "0", compact)
+
+
+def _click_and_wait(session: _Session, locator) -> None:
+    locator.first.click(timeout=10_000)
+    session.page.wait_for_load_state("domcontentloaded", timeout=30_000)
+    session.page.wait_for_timeout(1_500)
+
+
+def _switch_account(session: _Session, username: str) -> None:
+    """login.orange.fr pre-selects the account recognised from the Orange line: use the configured one."""
+    page = session.page
+    shown = page.locator('[data-testid="user-login"]')
+    change = page.locator('[data-testid="change-account"]')
+    if not _visible(shown) or _identity(shown.first.inner_text()) == _identity(username) or not _visible(change):
+        return
+    _click_and_wait(session, change)
+    session.snapshot("accounts")
+    for button in page.locator("[data-testid]").all():
+        if _identity(button.get_attribute("data-testid") or "") == _identity(username) and button.is_visible():
+            _click_and_wait(session, button)
+            return
+    other = page.locator('[data-testid="input-other-account"]')
+    if not _visible(other):
+        raise OrangePortalError("Choix « autre compte » introuvable sur login.orange.fr (voir --debug)")
+    _click_and_wait(session, other)
+
+
 def _login(session: _Session, username: str, password: str) -> None:
     page = session.page
     if "login.orange.fr" not in page.url:
         return
-    login = page.locator('input#login, input[name="login"], input[type="email"], input[autocomplete="username"]')
-    if login.count() and login.first.is_visible():
+    _switch_account(session, username)
+    login = page.locator('[data-testid="input-login"], input#login:not([readonly]), input[type="email"]')
+    typed_login = _visible(login)
+    if typed_login:
         login.first.fill(username)
-        if not session.click_text(r"continuer|suivant|valider"):
+        submit = page.locator('[data-testid="submit-login"]')
+        if _visible(submit):
+            _click_and_wait(session, submit)
+        elif not session.click_text(r"continuer|suivant|valider"):
             raise OrangePortalError("Bouton « Continuer » introuvable sur la page d'identification Orange")
         session.check_human()
         session.snapshot("after-login")
@@ -135,8 +194,18 @@ def _login(session: _Session, username: str, password: str) -> None:
     if not (password_box.count() and password_box.first.is_visible()):
         session.check_human()
         raise OrangePortalError("Champ mot de passe Orange introuvable (page de connexion modifiée ?)")
+    shown = page.locator('[data-testid="user-login"]')
+    recognised = _visible(shown) and _identity(shown.first.inner_text()) == _identity(username)
+    if not typed_login and not recognised and _identity(username) not in _identity(session.body()):
+        # Never send the password to an account we did not type nor recognise.
+        raise OrangePortalError("Orange propose un autre compte que ORANGE_USERNAME : connexion annulée, "
+                                "aucun mot de passe envoyé")
     password_box.first.fill(password)
-    if not session.click_text(r"continuer|se connecter|s'identifier|valider"):
+    submit = page.locator('[data-testid="submit-password"]')
+    if _visible(submit):
+        _click_and_wait(session, submit)
+    elif not session.click_text(r"continuer|se connecter|s.identifier|valider"):
+        password_box.first.fill("")
         raise OrangePortalError("Bouton de validation du mot de passe introuvable")
     session.check_human()
     session.snapshot("after-password")

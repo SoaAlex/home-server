@@ -32,6 +32,8 @@ def test_selects_only_download_links_of_the_requested_month():
     ("https://login.orange.fr/front/otp", "Saisissez le code reçu par SMS"),
     ("https://login.orange.fr/", "Vérifiez que vous n'êtes pas un robot (captcha)"),
     ("https://login.orange.fr/", "Validez la connexion sur votre mobile avec Mobile Connect"),
+    ("https://login.orange.fr/orange-et-moi", "Identification avec votre mobile. Pour vous identifier, nous allons "
+     "envoyer une demande de connexion sur votre mobile de confiance. Envoyer la demande"),
 ])
 def test_mfa_captcha_and_mobile_validation_require_a_human(url, text):
     with pytest.raises(ManualAuthRequired):
