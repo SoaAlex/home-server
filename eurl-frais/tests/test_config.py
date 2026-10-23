@@ -23,7 +23,6 @@ def test_loads_paths_amounts_and_defaults():
 
     assert config.template_path == Path("/eurl/LOYER/QUITTANCE DE LOYER.docx")
     assert config.orange_dir == Path("/eurl/CHARGES/ORANGE")
-    assert config.reports_dir == Path("/eurl/CHARGES/RAPPORTS")
     assert config.orange_share == Decimal("0.80")
     assert config.fixed_charges == (("Gaz", Decimal("10.00")), ("Électricité", Decimal("5.00")))
     assert config.orange_expected_invoices == 2

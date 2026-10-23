@@ -17,7 +17,6 @@ from .domain import format_eur, month_name_fr
 from .invoice_parser import InvoiceParseError, parse_invoice_pdf
 from .orange_portal import OrangePortalError, download_invoices
 from .rent_pdf import default_payment_date, generate_rent_receipt, rent_receipt_filename, template_rent_amount
-from .report_pdf import generate_report_pdf, report_filename
 from .storage import InvoiceConflict, collect_month_invoices, store_orange_pdf
 from .summary import MonthlySummary, build_summary
 
@@ -103,7 +102,8 @@ def discord_message(summary: MonthlySummary, *, receipt_name: str | None, paymen
     lines += [rent, f"**{total_label} : {format_eur(summary.grand_total)}**"]
     if summary.problems:
         lines += ["", "⚠️ Points d'attention :"] + [f"• {problem}" for problem in summary.problems]
-    lines += ["", "📎 Rapport, quittance et factures Orange joints (archivés dans EURL/CHARGES et EURL/LOYER)."]
+    if receipt_name or summary.orange_lines:
+        lines += ["", "📎 Justificatifs joints : quittance et factures Orange (archivés dans EURL/LOYER et EURL/CHARGES/ORANGE)."]
     return "\n".join(lines)
 
 
@@ -180,13 +180,9 @@ def run_monthly(
             out("[simulation] aucun fichier écrit, aucun envoi Discord.\n" + message)
             return EXIT_OK if summary.complete else EXIT_INCOMPLETE
 
-        report_path = config.reports_dir / report_filename(year, month)
-        generate_report_pdf(summary, report_path, generated_on=today,
-                            receipt_name=receipt_path.name if receipt_ready else None,
-                            payment_date=payment if receipt_ready else None)
         complete = summary.complete and receipt_ready
-        if notify:
-            files = [report_path] + ([receipt_path] if receipt_ready else []) + [line.path for line in summary.orange_lines]
+        if notify:  # the Discord message is the report; PDFs attached are the receipts for Tiime
+            files = ([receipt_path] if receipt_ready else []) + [line.path for line in summary.orange_lines]
             sender(config.discord_webhook_url, message, files)
             if complete:
                 _write_state(sent_path, {"sent_at": datetime.now().isoformat(timespec="seconds"),

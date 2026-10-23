@@ -59,10 +59,6 @@ class Config:
         return self.charges_dir / "ORANGE"
 
     @property
-    def reports_dir(self) -> Path:
-        return self.charges_dir / "RAPPORTS"
-
-    @property
     def has_orange_credentials(self) -> bool:
         return bool(self.orange_username and self.orange_password)
 

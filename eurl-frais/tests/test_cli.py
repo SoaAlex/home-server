@@ -71,11 +71,12 @@ def test_complete_month_archives_everything_and_notifies_once(env):
     receipt = load_config(env).loyer_dir / "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf"
     receipt_text = " ".join(PdfReader(receipt).pages[0].extract_text().split())
     assert "Date du paiement : 06/10/2026" in receipt_text and "le 10/10/2026." in receipt_text
-    report = load_config(env).reports_dir / "RAPPORT_FRAIS_2026-09.pdf"
-    assert report.is_file()
+    assert not (load_config(env).charges_dir / "RAPPORTS").exists()  # the Discord message is the report
     (content, files), = sender.calls
-    assert files[:2] == ["RAPPORT_FRAIS_2026-09.pdf", "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf"] and len(files) == 4
+    assert files == ["QUITTANCE DE LOYER SEPTEMBRE 2026.pdf", "2026-09_Orange_internet_OR-NET-0001.pdf",
+                     "2026-09_Orange_mobile_OR-MOB-0002.pdf"]
     assert "COMPLET" in content and "67,78" in content and "200,00" in content and "267,78" in content
+    assert "OR-NET-0001" in content and "39,99" in content and "12,79" in content
 
 
 def test_second_run_does_not_resend(env):
@@ -92,8 +93,6 @@ def test_incomplete_month_warns_then_completes_with_a_manual_pdf(env):
     assert run(env, sender=sender, downloader=downloader_for(TWO_INVOICES[0])) == 3
     assert "INCOMPLET" in sender.calls[0][0]
     assert "provisoire" in sender.calls[0][0]
-    report = load_config(env).reports_dir / "RAPPORT_FRAIS_2026-09.pdf"
-    assert "provisoire" in " ".join(PdfReader(report).pages[0].extract_text().split())
 
     orange_pdf(load_config(env).orange_dir, "facture mobile.pdf", ref="OR-MOB-0002", total="15,99", service="forfait mobile")
     assert run(env, sender=sender, use_orange=False) == 0

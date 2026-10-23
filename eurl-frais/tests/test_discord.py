@@ -25,13 +25,13 @@ def test_posts_message_and_pdfs_as_one_multipart_request(tmp_path):
         seen.append(request)
         return httpx.Response(200, json={"id": "1"})
 
-    files = [pdf(tmp_path, "RAPPORT_FRAIS_2026-09.pdf"), pdf(tmp_path, "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf")]
+    files = [pdf(tmp_path, "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf"), pdf(tmp_path, "2026-09_Orange_internet_A.pdf")]
     send_discord(WEBHOOK, "Frais septembre", files, client=client_for(handler))
 
     assert len(seen) == 1
     body = seen[0].content
     assert b'name="payload_json"' in body and b"Frais septembre" in body
-    assert b'filename="RAPPORT_FRAIS_2026-09.pdf"' in body
+    assert b'filename="QUITTANCE DE LOYER SEPTEMBRE 2026.pdf"' in body
     assert b'name="files[1]"' in body
     assert seen[0].url.params["wait"] == "true"
 
