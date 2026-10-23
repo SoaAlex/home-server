@@ -3,8 +3,12 @@
 Conteneur CLI (aucun port publié) lancé le 10 de chaque mois par une tâche Hermes. Pour le mois de frais
 **M** (par défaut le mois précédent), il :
 
-1. télécharge les factures Orange (Internet + Mobile) émises en M depuis l'espace client (Playwright) et les
-   archive dans `EURL/CHARGES/ORANGE/AAAA-MM_Orange_<service>_<référence>.pdf` (jamais d'écrasement, dédoublonnage SHA-256) ;
+1. télécharge les factures Orange (Internet + Mobile) émises en M depuis l'espace client (Playwright : chaque
+   contrat, page « historique des factures ») et les archive dans
+   `EURL/CHARGES/ORANGE/AAAA-MM-JJ_Orange_<internet|mobile>_<TTC>EUR.pdf` (ex. `2026-09-07_Orange_mobile_12,34EUR.pdf`).
+   Date, service et montant viennent de l'espace client ; le montant doit aussi figurer dans le texte du PDF, sinon
+   la facture est mise de côté dans `state/orange/a-verifier/` et non comptée. Jamais d'écrasement : une facture
+   déjà archivée (même nom) est conservée telle quelle, Orange régénérant certains PDF à chaque téléchargement ;
 2. émet la quittance du loyer de M (`EURL/LOYER/QUITTANCE DE LOYER <MOIS> <AAAA>.pdf`) en recopiant le modèle Word
    `LOYER/QUITTANCE DE LOYER.docx` (textes, gras/italique, filets, signature) ; seules la période, la date de paiement
    (par défaut le `RENT_PAYMENT_DAY` de M+1) et la date d'émission (jour du passage) changent ;
@@ -44,7 +48,9 @@ Codes de sortie : `0` complet, `3` incomplet (facture Orange manquante ou quitta
 
 Code SMS, CAPTCHA ou validation sur mobile ne sont jamais contournés : le rapport part en **INCOMPLET** avec la
 raison. Solutions : relancer `eurl-frais orange --month AAAA-MM --debug` en supervision, ou déposer les PDF de
-factures dans `EURL/CHARGES/ORANGE/` (n'importe quel nom) puis `eurl-frais monthly --month AAAA-MM --skip-orange`.
+factures dans `EURL/CHARGES/ORANGE/` puis `eurl-frais monthly --month AAAA-MM --skip-orange`. Le plus sûr est de
+les nommer `AAAA-MM-JJ_Orange_<internet|mobile>_<TTC>EUR.pdf` (lu sans analyser le PDF) ; un autre nom est
+analysé (texte du PDF) et signalé s'il est illisible. La session Orange est conservée dans `state/orange/`.
 Le mois de rattachement est la **date d'émission** de la facture (facture reçue en M = charge de M, remboursée en M+1).
 
 ## Tests

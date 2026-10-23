@@ -5,10 +5,11 @@ import hashlib
 import os
 import re
 import tempfile
-import unicodedata
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
+from .domain import money
 from .invoice_parser import InvoiceParseError, OrangeInvoice, parse_invoice_pdf
 
 FILE_MODE = 0o660  # same group access as the existing OneDrive documents
@@ -24,10 +25,30 @@ class StoredFile:
     created: bool
 
 
-def _safe(value: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", value)
-    ascii_value = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return re.sub(r"[^A-Za-z0-9_-]+", "-", ascii_value).strip("-_")[:80]
+# Archive name = metadata (issue date, service, TTC amount), readable by the user and by collect_month_invoices
+# without parsing the PDF: Orange PDFs have a column layout, and a renamed manual drop works the same way.
+CANONICAL_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_Orange_(internet|mobile|orange)_(\d+,\d{2})EUR\.pdf$")
+RENAME_HINT = "renommer le PDF en AAAA-MM-JJ_Orange_<internet|mobile>_<montant TTC>EUR.pdf pour le prendre en compte"
+
+
+def canonical_name(invoice: OrangeInvoice) -> str:
+    amount = f"{invoice.total_ttc:.2f}".replace(".", ",")
+    return f"{invoice.issue_date:%Y-%m-%d}_Orange_{invoice.service}_{amount}EUR.pdf"
+
+
+def _from_canonical_name(path: Path, match: re.Match[str]) -> OrangeInvoice:
+    content = path.read_bytes()
+    if not content.startswith(b"%PDF"):
+        raise InvoiceParseError("ce fichier n'est pas un PDF")
+    year, month, day, service, amount = match.groups()
+    try:
+        issued = date(int(year), int(month), int(day))
+    except ValueError as exc:
+        raise InvoiceParseError("date invalide dans le nom du fichier") from exc
+    return OrangeInvoice(
+        service=service, invoice_id=None, issue_date=issued, period_start=None, period_end=None,
+        total_ttc=money(amount), source_filename=path.name, sha256=hashlib.sha256(content).hexdigest(),
+    )
 
 
 def write_atomic(path: Path, content: bytes) -> None:
@@ -54,13 +75,11 @@ def store_orange_pdf(invoice: OrangeInvoice, content: bytes, orange_dir: str | P
     digest = hashlib.sha256(content).hexdigest()
     if invoice.sha256 and invoice.sha256 != digest:
         raise InvoiceConflict("Le PDF ne correspond pas à la facture analysée")
-    reference = _safe(invoice.invoice_id or "") or digest[:10]
-    issued = invoice.issue_date
-    destination = Path(orange_dir) / f"{issued:%Y-%m}_Orange_{invoice.service}_{reference}.pdf"
+    destination = Path(orange_dir) / canonical_name(invoice)
     if destination.exists():
-        if hashlib.sha256(destination.read_bytes()).hexdigest() == digest:
-            return StoredFile(destination, False)
-        raise InvoiceConflict(f"{destination.name} existe déjà avec un contenu différent")
+        # Same issue date, service and amount = same invoice. Orange regenerates some PDFs on each
+        # download (different bytes): the copy already archived (or dropped by hand) is kept untouched.
+        return StoredFile(destination, False)
     write_atomic(destination, content)
     return StoredFile(destination, True)
 
@@ -81,13 +100,14 @@ def collect_month_invoices(
     # Canonical names first so they win over manual copies of the same file.
     paths = sorted(
         (p for p in root.iterdir() if p.is_file() and p.suffix.lower() == ".pdf" and not p.name.startswith(".")),
-        key=lambda p: (not re.match(r"\d{4}-\d{2}_Orange_", p.name), p.name),
+        key=lambda p: (not CANONICAL_RE.match(p.name), p.name),
     )
     for path in paths:
+        match = CANONICAL_RE.match(path.name)
         try:
-            invoice = parse_invoice_pdf(path)
-        except InvoiceParseError as exc:
-            problems.append(f"{path.name} : {exc}")
+            invoice = _from_canonical_name(path, match) if match else parse_invoice_pdf(path)
+        except (InvoiceParseError, OSError) as exc:
+            problems.append(f"{path.name} : {exc} — {RENAME_HINT}")
             continue
         if (invoice.issue_date.year, invoice.issue_date.month) == (year, month):
             found.setdefault(invoice.sha256, (invoice, path))

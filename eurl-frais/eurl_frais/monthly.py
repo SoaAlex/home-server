@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 from contextlib import contextmanager
@@ -14,7 +16,7 @@ from typing import Callable, Iterator
 from .config import Config
 from .discord_delivery import send_discord
 from .domain import format_eur, month_name_fr
-from .invoice_parser import InvoiceParseError, parse_invoice_pdf
+from .invoice_parser import InvoiceParseError, OrangeInvoice, pdf_text
 from .orange_portal import OrangePortalError, download_invoices
 from .rent_pdf import default_payment_date, generate_rent_receipt, rent_receipt_filename, template_rent_amount
 from .storage import InvoiceConflict, collect_month_invoices, store_orange_pdf
@@ -53,26 +55,60 @@ def _write_state(path: Path, data: dict) -> None:
     os.chmod(path, 0o600)
 
 
+def _quarantine(config: Config, path: Path) -> None:
+    folder = config.state_dir / "orange" / "a-verifier"
+    folder.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, folder / path.name)
+
+
 def fetch_orange(config: Config, year: int, month: int, downloader=download_invoices, *, debug: bool = False):
-    """Download the month's invoices and archive every readable one. Returns (new files, problems)."""
+    """Download the month's invoices and archive them. Returns (new files, problems).
+
+    Date, service and amount come from the customer area; when the PDF has a text layer it must contain
+    that amount, otherwise the file is quarantined instead of being counted.
+    """
     archived: list[str] = []
     problems: list[str] = []
     work = config.state_dir / "tmp"
     work.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=work) as tmp:
-        paths = downloader(config.orange_username, config.orange_password, config.state_dir / "orange",
+        found = downloader(config.orange_username, config.orange_password, config.state_dir / "orange",
                            Path(tmp), year, month, debug=debug)
-        if not paths:
-            problems.append(f"Orange : aucune facture de {month_name_fr(month)} {year} trouvée sur le portail")
-        for path in paths:
+        if not found:
+            problems.append(f"Orange : aucune facture de {month_name_fr(month)} {year} sur l'espace client")
+        seen: set[tuple] = set()
+        for item in found:
+            label = f"{SERVICE_LABELS.get(item.service, 'Orange')} du {item.issue_date:%d/%m/%Y}"
+            amount = f"{item.total_ttc:.2f}".replace(".", ",")
+            key = (item.service, item.issue_date, item.total_ttc)
+            if key in seen:  # same archive name: the second one would be silently dropped
+                _quarantine(config, item.path)
+                problems.append(f"{label} : deux factures de {amount} € le même jour — la seconde n'est pas comptée, "
+                                "copie dans state/orange/a-verifier (la renommer à la main si elle est distincte)")
+                continue
+            seen.add(key)
             try:
-                invoice = parse_invoice_pdf(path)
-                stored = store_orange_pdf(invoice, path.read_bytes(), config.orange_dir)
-            except (InvoiceParseError, InvoiceConflict, ValueError) as exc:
-                quarantine = config.state_dir / "orange" / "a-verifier"
-                quarantine.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(path, quarantine / path.name)
-                problems.append(f"Facture Orange téléchargée mais inexploitable ({exc}) : copie dans state/orange/a-verifier")
+                text = re.sub(r"\s", "", pdf_text(item.path))
+            except InvoiceParseError as exc:
+                _quarantine(config, item.path)
+                problems.append(f"{label} : {exc} — copie dans state/orange/a-verifier")
+                continue
+            if text and amount.replace(" ", "") not in text:
+                _quarantine(config, item.path)
+                problems.append(f"{label} : montant {amount} € de l'espace client absent du PDF — "
+                                "copie dans state/orange/a-verifier, non comptée")
+                continue
+            content = item.path.read_bytes()
+            invoice = OrangeInvoice(
+                service=item.service, invoice_id=None, issue_date=item.issue_date, period_start=None,
+                period_end=None, total_ttc=item.total_ttc, source_filename=item.path.name,
+                sha256=hashlib.sha256(content).hexdigest(),
+            )
+            try:
+                stored = store_orange_pdf(invoice, content, config.orange_dir)
+            except (InvoiceConflict, ValueError) as exc:
+                _quarantine(config, item.path)
+                problems.append(f"{label} : {exc} — copie dans state/orange/a-verifier")
                 continue
             if stored.created:
                 archived.append(stored.path.name)
@@ -90,8 +126,9 @@ def discord_message(summary: MonthlySummary, *, receipt_name: str | None, paymen
     ]
     for line in summary.orange_lines:
         invoice = line.invoice
+        number = f" n° {invoice.invoice_id}" if invoice.invoice_id else ""
         lines.append(
-            f"• {SERVICE_LABELS.get(invoice.service, 'Orange')} — facture {invoice.invoice_id or 'sans n°'} du "
+            f"• {SERVICE_LABELS.get(invoice.service, 'Orange')} — facture{number} du "
             f"{invoice.issue_date:%d/%m/%Y} : {format_eur(invoice.total_ttc)} → {format_eur(line.share_amount)} "
             f"({summary.share_percent})"
         )

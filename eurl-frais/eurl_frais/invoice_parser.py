@@ -14,7 +14,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
-import pdfplumber
+import pypdfium2 as pdfium
 
 from .domain import money
 
@@ -158,6 +158,18 @@ def parse_invoice_text(raw_text: str) -> ParsedInvoice:
     )
 
 
+def pdf_text(path: str | Path) -> str:
+    """Text layer of every page ('' for scans). pdfium copes with the Orange PDFs that pdfminer chokes on."""
+    try:
+        document = pdfium.PdfDocument(str(path))
+    except pdfium.PdfiumError as exc:
+        raise InvoiceParseError(f"PDF invalide: {Path(path).name}") from exc
+    try:
+        return "\n".join(page.get_textpage().get_text_bounded() for page in document)
+    finally:
+        document.close()
+
+
 def parse_invoice_pdf(path: str | Path) -> OrangeInvoice:
     source = Path(path)
     try:
@@ -166,11 +178,7 @@ def parse_invoice_pdf(path: str | Path) -> OrangeInvoice:
         raise InvoiceParseError(f"PDF illisible: {source.name}") from exc
     if not content.startswith(b"%PDF"):
         raise InvoiceParseError(f"{source.name} n'est pas un PDF")
-    try:
-        with pdfplumber.open(source) as pdf:
-            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
-    except Exception as exc:  # pdfminer raises many unrelated exception types
-        raise InvoiceParseError(f"PDF invalide: {source.name}") from exc
+    text = pdf_text(source)
     if not text.strip():
         raise InvoiceParseError(f"PDF sans texte exploitable (scan ?) : {source.name}")
     parsed = parse_invoice_text(text)

@@ -1,28 +1,38 @@
 """Download the month's invoice PDFs from the Orange customer area with a real browser.
 
-The portal is not a documented API: selectors are generic on purpose and every
-unexpected screen stops the run with a readable error. MFA, CAPTCHA or "validate on
-your phone" screens are never bypassed: they raise ManualAuthRequired. The browser
-session is kept in the private state directory to avoid logging in every month.
-`debug=True` saves screenshots and link inventories (local only, may contain personal
-data) to adapt the selectors after a portal change.
+Flow observed on 23/10/2026 (data-testid / aria-label selectors, generic fallbacks):
+login.orange.fr pre-selects the account recognised from the home Orange line -> switch to ORANGE_USERNAME
+when different -> password -> optional promotion screen (« Plus tard ») -> espace-client.orange.fr/accueil.
+Each contract (« Forfait mobile », « Offre internet ») has /facture-paiement/<id>/historique-des-factures
+listing links « Voir la facture du <date> au format PDF »; a click fetches the PDF from /ecd_wp/facture/.
+
+MFA, CAPTCHA or « validate on your phone » screens are never bypassed: they raise ManualAuthRequired.
+The browser session is kept in the private state directory to avoid logging in every month.
+`debug=True` saves screenshots and link inventories (local only, they contain personal data).
 """
 from __future__ import annotations
 
 import json
 import re
 import unicodedata
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
-from typing import Any
 
-ORANGE_HOME = "https://espace-client.orange.fr/"
+from .domain import money
+
+ESPACE_CLIENT = "https://espace-client.orange.fr"
+ORANGE_HOME = f"{ESPACE_CLIENT}/"
+CUSTOMER_AREA = f"{ESPACE_CLIENT}/accueil"
 _MONTHS = ("janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet", "aout",
            "septembre", "octobre", "novembre", "decembre")
+_INVOICE_LABEL_RE = re.compile(r"voir la facture du (\d{1,2})(?:er)? ([a-z]+) (\d{4})")
 _HUMAN_CHECKS = (
     "captcha", "pas un robot", "code recu par sms", "code de verification", "saisissez le code",
     "authentification a deux facteurs", "double authentification", "validez la connexion sur votre mobile",
     "mobile connect", "/otp", "/2fa",
-    # "Authentification renforcée" (Orange et moi app): push request to the trusted phone, no password step.
+    # « Authentification renforcée » (Orange et moi app): push request to the trusted phone, no password step.
     "mobile de confiance", "identification avec votre mobile", "/orange-et-moi",
 )
 
@@ -44,6 +54,11 @@ def _compact(text: str) -> str:
     return re.sub(r"[\s.\-]", "", _plain(text))
 
 
+def _identity(text: str) -> str:
+    """Comparable login: lower case, no separators, +33/0033 phone prefix -> 0."""
+    return re.sub(r"^(\+33|0033)", "0", _compact(text))
+
+
 def manual_auth_required(url: str, text: str) -> bool:
     probe = _plain(f"{url} {text}")
     if any(token in probe for token in _HUMAN_CHECKS):
@@ -54,29 +69,15 @@ def manual_auth_required(url: str, text: str) -> bool:
     return False
 
 
-def month_matches(text: str, year: int, month: int) -> bool:
-    plain = _plain(text)
-    return bool(
-        re.search(rf"\b{_MONTHS[month - 1]}\s+{year}\b", plain)
-        or re.search(rf"\b\d{{1,2}}/{month:02d}/{year}\b", plain)
-        or re.search(rf"(?<![\d/]){month:02d}/{year}\b", plain)
-    )
-
-
-def select_invoice_links(links: list[dict[str, Any]], year: int, month: int) -> list[dict[str, Any]]:
-    """Keep download links whose row mentions the requested month (issue month = expense month)."""
-    selected = []
-    for link in links:
-        label = _plain(f"{link.get('text', '')} {link.get('aria', '')}")
-        href = _plain(str(link.get("href", "")))
-        looks_like_download = bool(re.search(r"telecharg|pdf|download", f"{label} {href}"))
-        if looks_like_download and month_matches(f"{link.get('context', '')} {link.get('text', '')}", year, month):
-            selected.append(link)
-    return selected
+def invoice_label_date(label: str) -> date | None:
+    """Date of a « Voir la facture du 7 septembre 2026 au format PDF » link, else None."""
+    match = _INVOICE_LABEL_RE.search(_plain(label))
+    if not match or match.group(2) not in _MONTHS:
+        return None
+    return date(int(match.group(3)), _MONTHS.index(match.group(2)) + 1, int(match.group(1)))
 
 
 _COLLECT_JS = """() => Array.from(document.querySelectorAll('a, button')).map((el, index) => {
-    el.setAttribute('data-eurl-frais-index', String(index));
     const row = el.closest('tr, li, article, section, [class*=bill], [class*=facture], [class*=invoice]');
     return {index, tag: el.tagName.toLowerCase(), href: el.href || '', text: (el.innerText || '').trim().slice(0, 160),
             aria: el.getAttribute('aria-label') || '', context: row ? (row.innerText || '').trim().slice(0, 300) : ''};
@@ -94,11 +95,14 @@ class _Session:
             return
         self.step += 1
         prefix = self.debug_dir / f"{self.step:02d}-{name}"
-        self.page.screenshot(path=f"{prefix}.png", full_page=True)
-        links = self.page.evaluate(_COLLECT_JS)
-        prefix.with_suffix(".json").write_text(
-            json.dumps({"url": self.page.url.split("?")[0], "links": links}, ensure_ascii=False, indent=1)
-        )
+        try:
+            self.page.screenshot(path=f"{prefix}.png", full_page=True)
+            links = self.page.evaluate(_COLLECT_JS)
+            prefix.with_suffix(".json").write_text(
+                json.dumps({"url": self.page.url.split("?")[0], "links": links}, ensure_ascii=False, indent=1)
+            )
+        except Exception:  # debugging must never break the run
+            pass
 
     def body(self) -> str:
         try:
@@ -130,12 +134,6 @@ class _Session:
         return False
 
 
-def _dismiss_cookies(session: _Session) -> None:
-    session.click_text(r"^(tout refuser|continuer sans accepter|refuser)$", roles=("button",)) or session.click_text(
-        r"^(tout accepter|accepter)$", roles=("button",)
-    )
-
-
 def _visible(locator) -> bool:
     try:
         return bool(locator.count()) and locator.first.is_visible()
@@ -143,16 +141,16 @@ def _visible(locator) -> bool:
         return False
 
 
-def _identity(text: str) -> str:
-    """Comparable login: lower case, no separators, +33/0033 phone prefix -> 0."""
-    compact = _compact(text)
-    return re.sub(r"^(\+33|0033)", "0", compact)
-
-
 def _click_and_wait(session: _Session, locator) -> None:
     locator.first.click(timeout=10_000)
     session.page.wait_for_load_state("domcontentloaded", timeout=30_000)
     session.page.wait_for_timeout(1_500)
+
+
+def _dismiss_cookies(session: _Session) -> None:
+    session.click_text(r"^(tout refuser|continuer sans accepter|refuser)$", roles=("button",)) or session.click_text(
+        r"^(tout accepter|accepter)$", roles=("button",)
+    )
 
 
 def _switch_account(session: _Session, username: str) -> None:
@@ -191,7 +189,7 @@ def _login(session: _Session, username: str, password: str) -> None:
         session.check_human()
         session.snapshot("after-login")
     password_box = page.locator('input#password, input[type="password"]')
-    if not (password_box.count() and password_box.first.is_visible()):
+    if not _visible(password_box):
         session.check_human()
         raise OrangePortalError("Champ mot de passe Orange introuvable (page de connexion modifiée ?)")
     shown = page.locator('[data-testid="user-login"]')
@@ -209,6 +207,13 @@ def _login(session: _Session, username: str, password: str) -> None:
         raise OrangePortalError("Bouton de validation du mot de passe introuvable")
     session.check_human()
     session.snapshot("after-password")
+    if "/promo/" in page.url:
+        # Optional upsell (e.g. « Activez l'authentification renforcée ») shown after a successful login:
+        # postpone it, never accept it on the user's behalf.
+        if not session.click_text(r"^\s*plus tard\s*$", roles=("button", "link")):
+            raise OrangePortalError("Écran promotionnel Orange sans bouton « Plus tard » (voir --debug)")
+        session.check_human()
+        session.snapshot("after-promo")
     if "login.orange.fr" in page.url:
         text = _plain(session.body())
         if "incorrect" in text or "erreur" in text:
@@ -216,9 +221,123 @@ def _login(session: _Session, username: str, password: str) -> None:
         raise OrangePortalError("Connexion Orange non aboutie (écran inattendu, voir --debug)")
 
 
+def _wait_for_customer_area(page, timeout_ms: int = 30_000) -> None:
+    """espace-client.orange.fr is a single-page app: wait until it has rendered real links."""
+    try:
+        page.wait_for_function("document.querySelectorAll('a[href]').length >= 5", timeout=timeout_ms)
+    except Exception:
+        raise OrangePortalError("L'espace client Orange ne s'est pas affiché (voir --debug)") from None
+    page.wait_for_timeout(1_500)
+
+
+@dataclass(frozen=True)
+class PortalInvoice:
+    """A downloaded PDF with the facts shown by the customer area (source of truth for date and amount)."""
+
+    path: Path
+    service: str
+    issue_date: date
+    total_ttc: Decimal
+    contract: str
+
+
+def _service_from_labels(labels: str) -> str:
+    plain = _plain(labels)
+    # Mobile plans are named after their data allowance (« Forfait 100Go 5G »), without the word « mobile ».
+    mobile = bool(re.search(r"\bmobile\b|\bforfait\b|\d+\s?go\b|\b[45]g\b", plain))
+    internet = bool(re.search(r"internet|livebox|fibre|adsl|\bbox\b", plain))
+    if mobile != internet:
+        return "mobile" if mobile else "internet"
+    return "orange"
+
+
+def _contracts(page) -> dict[str, str]:
+    """Contract id -> service, from the « Factures de <offre> » links; each contract button is opened in turn."""
+    labels: dict[str, str] = {}
+
+    def scan() -> None:
+        links = page.eval_on_selector_all(
+            'a[href*="/facture-paiement/"]',
+            "els => els.map(e => [e.href, (e.getAttribute('aria-label') || '') + ' ' + (e.textContent || '')])")
+        for href, label in links:
+            match = re.search(r"/facture-paiement/(\d+)", href)
+            if match:
+                labels[match.group(1)] = f"{labels.get(match.group(1), '')} {label}"
+
+    scan()
+    buttons = page.get_by_role("button", name=re.compile(r"^\s*(forfait|offre)\b", re.I))
+    for index in range(buttons.count()):
+        button = buttons.nth(index)
+        if button.is_visible():
+            button.click(timeout=10_000)
+            page.wait_for_timeout(1_500)
+            scan()
+    return {contract: _service_from_labels(text) for contract, text in labels.items()}
+
+
+def _row_amount(row_text: str, issued: date) -> Decimal:
+    """Amount printed right after the invoice date in its history row (« 7 septembre 2026  33,33 € »)."""
+    plain = _plain(row_text)
+    pattern = (rf"\b{issued.day}(?:er)? {_MONTHS[issued.month - 1]} {issued.year}\s+"
+               r"(\d{1,3}(?:[ \u00a0\u202f]\d{3})*,\d{2})\s*€")
+    match = re.search(pattern, plain)
+    if not match:
+        raise OrangePortalError(f"Montant de la facture du {issued:%d/%m/%Y} introuvable sur l'espace client")
+    return money(match.group(1))
+
+
+_ROWS_JS = """els => els.map(e => {
+    const label = (e.getAttribute('aria-label') || e.textContent || '').replace(/\\s+/g, ' ').trim();
+    const row = e.closest('tr, li, [role=row], [class*=bill], [class*=facture], [class*=invoice]') || e.parentElement;
+    return [label, row ? row.innerText : ''];
+})"""
+
+
+def _collect_month_pdfs(
+    session: _Session, download_dir: Path, year: int, month: int, *, base: str = ESPACE_CLIENT,
+) -> list[PortalInvoice]:
+    page = session.page
+    contracts = _contracts(page)
+    if not contracts:
+        raise OrangePortalError("Aucun contrat trouvé dans l'espace client Orange (voir --debug)")
+    invoices: list[PortalInvoice] = []
+    for contract, service in contracts.items():
+        history = f"{base}/facture-paiement/{contract}/historique-des-factures"
+        page.goto(history, wait_until="domcontentloaded", timeout=45_000)
+        _wait_for_customer_area(page)
+        session.check_human()
+        session.snapshot(f"history-{contract[-4:]}")
+        wanted: dict[str, tuple[date, Decimal]] = {}
+        for label, row in page.locator("a").evaluate_all(_ROWS_JS):
+            issued = invoice_label_date(label)
+            if issued and (issued.year, issued.month) == (year, month) and label not in wanted:
+                wanted[label] = (issued, _row_amount(row, issued))
+        for label, (issued, amount) in wanted.items():
+            if page.url.split("?")[0] != history:
+                page.goto(history, wait_until="domcontentloaded", timeout=45_000)
+                _wait_for_customer_area(page)
+            # Substring match: the live accessible name also contains the CSS icon glyph of the link.
+            link = page.get_by_role("link", name=label).or_(page.locator("a").filter(has_text=label)).first
+            with page.expect_response(
+                lambda response: "application/pdf" in response.headers.get("content-type", "").lower(),
+                timeout=30_000,
+            ) as pdf_response:
+                link.click(timeout=10_000)
+            # The endpoint answers « application/pdf;charset=UTF-8 »: the browser-side body is decoded as text
+            # and corrupted, so the same request is replayed through the session's HTTP client (raw bytes).
+            replay = page.context.request.fetch(pdf_response.value.request)
+            content = replay.body()
+            if replay.status != 200 or not content.startswith(b"%PDF"):
+                raise OrangePortalError(f"La facture Orange du {issued:%d/%m/%Y} n'a pas pu être téléchargée en PDF")
+            target = download_dir / f"orange-{contract}-{issued:%Y-%m-%d}.pdf"
+            target.write_bytes(content)
+            invoices.append(PortalInvoice(target, service, issued, amount, contract))
+    return invoices
+
+
 def download_invoices(
     username: str, password: str, session_dir: Path, download_dir: Path, year: int, month: int, *, debug: bool = False,
-) -> list[Path]:
+) -> list[PortalInvoice]:
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
     from playwright.sync_api import sync_playwright
 
@@ -229,7 +348,6 @@ def download_invoices(
     debug_dir = session_dir / "debug" if debug else None
     if debug_dir:
         debug_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    downloads: list[Path] = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         context = browser.new_context(
@@ -245,35 +363,17 @@ def download_invoices(
             session.snapshot("home")
             session.check_human()
             _login(session, username, password)
-            if not session.click_text(r"factures?\b|facturation|factures et paiements"):
-                session.snapshot("no-bills-link")
-                raise OrangePortalError("Lien « Factures » introuvable dans l'espace client")
+            context.storage_state(path=str(state_file))  # keep the session as soon as the login succeeded
+            state_file.chmod(0o600)
+            if not page.url.startswith(CUSTOMER_AREA):
+                page.goto(CUSTOMER_AREA, wait_until="domcontentloaded", timeout=45_000)
+            _wait_for_customer_area(page)
             session.check_human()
-            session.snapshot("bills")
-            links = select_invoice_links(page.evaluate(_COLLECT_JS), year, month)
-            if not links and session.click_text(r"historique|toutes mes factures|voir (plus|toutes)"):
-                session.snapshot("bills-history")
-                links = select_invoice_links(page.evaluate(_COLLECT_JS), year, month)
-            for number, link in enumerate(links, start=1):
-                target = download_dir / f"orange-{year:04d}-{month:02d}-{number:02d}.pdf"
-                element = page.locator(f'[data-eurl-frais-index="{link["index"]}"]')
-                try:
-                    with page.expect_download(timeout=30_000) as info:
-                        element.click(timeout=10_000)
-                    info.value.save_as(str(target))
-                except PlaywrightTimeout:
-                    if not link.get("href", "").startswith("https://"):
-                        raise OrangePortalError("Le clic sur « Télécharger » n'a produit aucun PDF") from None
-                    response = context.request.get(link["href"], timeout=30_000)
-                    if response.status != 200 or not response.body().startswith(b"%PDF"):
-                        raise OrangePortalError("Le lien de facture Orange n'a pas renvoyé de PDF") from None
-                    target.write_bytes(response.body())
-                if not target.read_bytes().startswith(b"%PDF"):
-                    raise OrangePortalError("Fichier téléchargé non PDF")
-                downloads.append(target)
+            session.snapshot("customer-area")
+            invoices = _collect_month_pdfs(session, download_dir, year, month)
             context.storage_state(path=str(state_file))
             state_file.chmod(0o600)
-            return downloads
+            return invoices
         except PlaywrightTimeout as exc:
             session.snapshot("timeout")
             raise OrangePortalError(f"Délai dépassé sur le portail Orange ({page.url.split('?')[0]})") from exc
