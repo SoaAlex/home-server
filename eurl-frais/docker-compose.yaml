@@ -1,0 +1,22 @@
+services:
+  runner:
+    build: .
+    image: eurl-frais:latest
+    entrypoint: ["python", "-m", "eurl_frais"]
+    init: true
+    shm_size: "1gb"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      EURL_LOYER_DIR: /eurl/LOYER
+      EURL_CHARGES_DIR: /eurl/CHARGES
+      EURL_STATE_DIR: /state
+      TZ: Europe/Paris
+    user: "1000:10"
+    volumes:
+      - ./:/app:ro
+      # Seuls dossiers EURL accessibles (lecture/écriture) : LOYER et CHARGES.
+      - /volume2/NAS-STORAGE/OneDrive/TRAVAIL/EURL/LOYER:/eurl/LOYER:rw
+      - /volume2/NAS-STORAGE/OneDrive/TRAVAIL/EURL/CHARGES:/eurl/CHARGES:rw
+      - ./state:/state:rw
