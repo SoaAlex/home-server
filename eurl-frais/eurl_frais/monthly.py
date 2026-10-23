@@ -99,7 +99,8 @@ def discord_message(summary: MonthlySummary, *, receipt_name: str | None, paymen
     lines += [f"• {label} (prorata échéancier) : {format_eur(amount)}" for label, amount in summary.fixed_charges]
     rent = f"**Note « {summary.rent_note_title} » : {format_eur(summary.rent_amount)}** (HT = TTC, TVA 0)"
     rent += f" — quittance jointe, paiement du {payment_date:%d/%m/%Y}" if receipt_name else " — quittance NON émise"
-    lines += [rent, f"**Total remboursé par l'EURL : {format_eur(summary.grand_total)}**"]
+    total_label = "Total remboursé par l'EURL" if summary.complete else "Total provisoire (facture Orange manquante)"
+    lines += [rent, f"**{total_label} : {format_eur(summary.grand_total)}**"]
     if summary.problems:
         lines += ["", "⚠️ Points d'attention :"] + [f"• {problem}" for problem in summary.problems]
     lines += ["", "📎 Rapport, quittance et factures Orange joints (archivés dans EURL/CHARGES et EURL/LOYER)."]
@@ -131,6 +132,8 @@ def run_monthly(
             return EXIT_OK
 
         problems: list[str] = []
+        if not dry_run:
+            config.orange_dir.mkdir(parents=True, exist_ok=True)  # also the manual drop-off folder
         if use_orange and not dry_run:
             if config.has_orange_credentials:
                 try:

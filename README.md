@@ -12,7 +12,8 @@ docker/
 ├── teslamate/           Tesla vehicle tracking & Grafana dashboards
 ├── minecraft/           Minecraft server (CurseForge modpack)
 ├── qbittorrent/         Torrent client (managed by the UGOS app, not compose)
-└── maison/              Private house-search crawler + UI (port 8090, LAN/VPN only) — see maison/README.md
+├── maison/              Private house-search crawler + UI (port 8090, LAN/VPN only) — see maison/README.md
+└── eurl-frais/          Monthly EURL expenses CLI (Orange invoices, rent receipt, report → Discord) — see eurl-frais/README.md
 ```
 
 To rebuild everything after an OS reset or NAS swap, follow **[REBUILD.md](REBUILD.md)**.
@@ -62,6 +63,11 @@ LAN interface (`192.168.1.55`). Two consequences:
 | Grafana | `teslamate/grafana` | 3000 |
 | Mosquitto | `eclipse-mosquitto:2` | 1883 |
 
+### EURL expenses (`eurl-frais/`)
+
+One-shot CLI container (no port), run on the 10th of each month by a Hermes cron job through
+`/workspace/bin/eurl-frais monthly`. Mounts only `OneDrive/TRAVAIL/EURL/{LOYER,CHARGES}`.
+
 ### qBittorrent (`qbittorrent/`)
 
 | Service | Image | Port |
@@ -88,6 +94,7 @@ Secrets are stored in `.env` files (git-ignored). Each stack has its own:
 | `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI` |
 | `maison/.env` | `DATABASE_URL`, `DISCORD_WEBHOOK_URL`, `ENRICH_TOKEN`, `IMAP_USER`, `IMAP_PASSWORD`, … |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
+| `eurl-frais/.env` | `ORANGE_USERNAME`, `ORANGE_PASSWORD`, `ORANGE_SHARE`, `GAS_MONTHLY_EUR`, `ELECTRICITY_MONTHLY_EUR`, `DISCORD_WEBHOOK_URL`, … |
 
 Create from templates:
 ```bash

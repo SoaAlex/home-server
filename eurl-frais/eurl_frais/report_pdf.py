@@ -112,8 +112,10 @@ def generate_report_pdf(
         elements.append(_p(f"Justificatif : LOYER/{receipt_name}{paid}.", SMALL))
     else:
         elements.append(_p("Quittance non générée lors de ce passage (voir points d'attention).", SMALL))
+    total_heading = "3. Total remboursé par l'EURL" if summary.complete else \
+        "3. Total provisoire (facture Orange manquante, ne pas saisir tel quel)"
     elements += [
-        _p("3. Total remboursé par l'EURL", HEADING),
+        _p(total_heading, HEADING),
         _p(f"{summary.charges_note_title} {format_eur(summary.charges_total)} + {summary.rent_note_title} "
            f"{format_eur(summary.rent_amount)} = {format_eur(summary.grand_total)}", BOLD),
     ]
