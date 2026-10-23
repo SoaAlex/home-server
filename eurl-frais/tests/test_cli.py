@@ -91,10 +91,14 @@ def test_incomplete_month_warns_then_completes_with_a_manual_pdf(env):
 
     assert run(env, sender=sender, downloader=downloader_for(TWO_INVOICES[0])) == 3
     assert "INCOMPLET" in sender.calls[0][0]
+    assert "provisoire" in sender.calls[0][0]
+    report = load_config(env).reports_dir / "RAPPORT_FRAIS_2026-09.pdf"
+    assert "provisoire" in " ".join(PdfReader(report).pages[0].extract_text().split())
 
     orange_pdf(load_config(env).orange_dir, "facture mobile.pdf", ref="OR-MOB-0002", total="15,99", service="forfait mobile")
     assert run(env, sender=sender, use_orange=False) == 0
     assert "COMPLET" in sender.calls[1][0] and "INCOMPLET" not in sender.calls[1][0]
+    assert "provisoire" not in sender.calls[1][0]
 
 
 def test_dry_run_writes_nothing_and_sends_nothing(env):
@@ -128,6 +132,7 @@ def test_orange_blocking_is_reported_and_not_fatal(env):
 
     assert run(env, sender=sender, downloader=blocked) == 3
     assert "code SMS" in sender.calls[0][0]
+    assert load_config(env).orange_dir.is_dir()  # ready for a manual drop
     assert (load_config(env).loyer_dir / "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf").is_file()
 
 
