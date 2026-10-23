@@ -72,8 +72,8 @@ def test_money_parses_french_number_format():
 
 
 def test_format_eur_uses_french_separators():
-    assert format_eur(Decimal("63.1")) == "63,10 €"
-    assert format_eur(Decimal("1234.5")) == "1\u202f234,50 €"
+    assert format_eur(Decimal("63.1")) == "63,10\u00a0€"
+    assert format_eur(Decimal("1234.5")) == "1\u00a0234,50\u00a0€"
 
 
 def test_share_of_rounds_to_cents():

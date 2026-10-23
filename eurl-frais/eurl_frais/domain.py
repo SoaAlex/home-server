@@ -37,12 +37,12 @@ def money(value: str | Decimal | int) -> Decimal:
 
 
 def format_eur(amount: Decimal) -> str:
-    """French display: 1 234,50 €."""
+    """French display: 1 234,50 € (no-break spaces, present in standard PDF fonts)."""
     value = money(amount)
     sign = "-" if value < 0 else ""
     units, cents = f"{abs(value):.2f}".split(".")
-    grouped = f"{int(units):,}".replace(",", "\u202f")
-    return f"{sign}{grouped},{cents} €"
+    grouped = f"{int(units):,}".replace(",", "\u00a0")
+    return f"{sign}{grouped},{cents}\u00a0€"
 
 
 def month_name_fr(month: int) -> str:
