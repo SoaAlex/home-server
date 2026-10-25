@@ -2,7 +2,12 @@
 """Client de l'API locale Maison pour l'agent d'enrichissement (cron Hermes).
 
 Évite curl + URL http + jeton en ligne de commande (bloqués par le scan de sécurité du cron).
-  maison pending [N]                  -> liste JSON des annonces en attente (écrit aussi /tmp/pending.json)
+  maison pending [--standard|--investigations|--all] [N]
+                                      -> liste JSON des annonces en attente.
+       --standard       file hors demandes d'investigation (job maison-enrichment) ; copie /tmp/pending.json
+       --investigations demandes « Investiguer » (address_request), la plus ancienne d'abord (job
+                        maison-address-investigation) ; copie /tmp/pending_investigations.json
+       --all (défaut)   tout, comme avant (les investigations en tête) ; copie /tmp/pending.json
   maison show ID                      -> fiche JSON
   maison post ID FICHIER.json         -> POST d'enrichissement
   maison fail ID "message"            -> marque l'annonce en échec
@@ -18,6 +23,10 @@ import urllib.request
 
 BASE = "http://host.docker.internal:8090"
 ENV = "/volume1/docker/maison/.env"
+FETCH_MAX = 250   # --standard / --investigations : l'API trie les investigations en tête, on filtre ici
+PENDING_MODES = ("--standard", "--investigations", "--all")
+PENDING_COPY = {"all": "/tmp/pending.json", "standard": "/tmp/pending.json",
+                "investigations": "/tmp/pending_investigations.json"}   # fichier distinct : les 2 jobs ne s'écrasent pas
 
 
 def token():
@@ -40,25 +49,48 @@ def call(method, path, params=None, body=None):
         sys.exit(f"HTTP {e.code}: {e.read()[:500].decode(errors='replace')}")
 
 
+def is_investigation(x):
+    return bool((x.get("enrichment") or {}).get("address_request"))
+
+
+def pending(args):
+    mode, n = "all", 6
+    for arg in args:
+        if arg in PENDING_MODES:
+            mode = arg[2:]
+        else:
+            n = int(arg)
+    out = call("GET", "/api/enrichment/pending", {"limit": n if mode == "all" else FETCH_MAX})
+    if mode == "investigations":
+        out = sorted((x for x in out if is_investigation(x)),
+                     key=lambda x: x["enrichment"]["address_request"].get("requested_at") or "")
+    elif mode == "standard":
+        waiting = sum(is_investigation(x) for x in out)
+        out = [x for x in out if not is_investigation(x)]
+        if waiting:
+            print(f"# {waiting} investigation(s) d'adresse en attente : traitées par le job "
+                  "maison-address-investigation, ne pas les traiter ici", file=sys.stderr)
+    slim = []
+    for x in out[:n]:
+        keep = {k: x.get(k) for k in ("id", "source", "url", "title", "description", "price", "city",
+                                      "postal_code", "surface_m2", "land_m2", "rooms", "bedrooms", "dpe",
+                                      "lat", "lon", "geo_precision", "address", "excluded_reason",
+                                      "has_garage", "has_garden", "blur", "ges", "year_built",
+                                      "published_at", "agency")}
+        keep["address_request"] = (x.get("enrichment") or {}).get("address_request")
+        keep["address_investigations"] = (x.get("enrichment") or {}).get("address_investigations")
+        keep["photo_urls"] = (x.get("photo_urls") or [])[:8]
+        slim.append(keep)
+    json.dump(slim, open(PENDING_COPY[mode], "w"), ensure_ascii=False)
+    print(json.dumps(slim, ensure_ascii=False, indent=1))
+
+
 def main(a):
     if not a:
         sys.exit(__doc__)
     cmd = a[0]
     if cmd == "pending":
-        out = call("GET", "/api/enrichment/pending", {"limit": a[1] if len(a) > 1 else 6})
-        slim = []
-        for x in out:
-            keep = {k: x.get(k) for k in ("id", "source", "url", "title", "description", "price", "city",
-                                          "postal_code", "surface_m2", "land_m2", "rooms", "bedrooms", "dpe",
-                                          "lat", "lon", "geo_precision", "address", "excluded_reason",
-                                          "has_garage", "has_garden", "blur", "ges", "year_built",
-                                          "published_at", "agency")}
-            keep["address_request"] = (x.get("enrichment") or {}).get("address_request")
-            keep["address_investigations"] = (x.get("enrichment") or {}).get("address_investigations")
-            keep["photo_urls"] = (x.get("photo_urls") or [])[:8]
-            slim.append(keep)
-        json.dump(slim, open("/tmp/pending.json", "w"), ensure_ascii=False)
-        print(json.dumps(slim, ensure_ascii=False, indent=1))
+        pending(a[1:])
     elif cmd == "show":
         print(json.dumps(call("GET", f"/api/listings/{int(a[1])}"), ensure_ascii=False, indent=1))
     elif cmd == "post":
