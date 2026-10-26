@@ -11,6 +11,9 @@ services:
       - ./data:/data
       - ./config:/app/config:ro
     networks: [common-network]
+    # DNS explicite : sans lui Docker copie le résolveur de l'hôte au démarrage (MagicDNS Tailscale
+    # 100.100.100.100), qui meurt dès que tailscaled s'arrête.
+    dns: [192.168.1.1, 8.8.8.8]
     restart: unless-stopped
 
   collector:
@@ -22,6 +25,7 @@ services:
       - ./data:/data
       - ./config:/app/config:ro
     networks: [common-network]
+    dns: [192.168.1.1, 8.8.8.8]
     depends_on: [web]
     restart: unless-stopped
 
