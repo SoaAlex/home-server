@@ -112,6 +112,23 @@ services:
       - /volume1/docker/home-server/wireguard/config:/config
     restart: unless-stopped
 
+  # WireGuard over WebSocket/TLS for networks that block UDP (work Wi-Fi).
+  # Path: client wstunnel -> wss://vpn.soaalex.com:443 -> NPM (TLS, WebSockets)
+  # -> 192.168.1.55:8480 -> UDP 127.0.0.1:51820 (wireguard, host network).
+  # The secret path prefix (.env) is the only accepted upgrade path, and the
+  # server can only forward to the local WireGuard port.
+  wstunnel:
+    image: ghcr.io/erebe/wstunnel:v11.1.0
+    container_name: wstunnel
+    network_mode: host
+    command:
+      - /home/app/wstunnel
+      - server
+      - ws://0.0.0.0:8480
+      - --restrict-to=127.0.0.1:51820
+      - --restrict-http-upgrade-path-prefix=${WSTUNNEL_PATH_PREFIX:?set WSTUNNEL_PATH_PREFIX in .env}
+    restart: unless-stopped
+
   aiostreams:
     image: ghcr.io/viren070/aiostreams:latest
     container_name: aiostreams
