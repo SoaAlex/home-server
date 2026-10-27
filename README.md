@@ -51,6 +51,7 @@ LAN interface (`192.168.1.55`). Two consequences:
 | Vaultwarden | `vaultwarden/server` | 83, 3012 | Bitwarden-compatible password manager |
 | Code Server | `linuxserver/code-server` | 8443 | VS Code for `soaalex`; LAN/VPN access |
 | WireGuard | `linuxserver/wireguard` | 51820/udp | VPN, **host** network mode |
+| wstunnel | `erebe/wstunnel` | 8480 (behind NPM) | WireGuard over WebSocket/TLS for UDP-blocking networks; secret path prefix `WSTUNNEL_PATH_PREFIX` in `.env` |
 | AIOStreams | `viren070/aiostreams` | 1080 | Stremio addon aggregator |
 | Frigate | `blakeblackshear/frigate` | 8971 | NVR; needs `/dev/dri/renderD128` |
 | PTZ preset | `python:3.12-alpine` | 8095 | Named CAM-PT2 positions for Home Assistant |
