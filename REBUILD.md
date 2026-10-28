@@ -44,7 +44,7 @@ says nothing about it.
 Copy off the NAS, or confirm they're in the repo:
 
 - [ ] `common/.env`, `home-server/.env`, `teslamate/.env`, `home-server/aiostreams/.env` — git-ignored
-- [ ] `home-server/wireguard/` — git-ignored; losing it means **reconfiguring every VPN client device**
+- [ ] `home-server/wireguard/` — git-ignored; losing it means **reconfiguring every VPN client device** (it also holds the Mac wstunnel kit, `clients/mac-wstunnel/`)
 - [ ] Router settings (§7) — recorded nowhere on the NAS
 - [ ] `docker volume ls` output, to verify nothing is missing afterwards
 
@@ -194,6 +194,8 @@ None of this lives on the NAS.
 | Setting | Value | Why |
 |---|---|---|
 | Port forward | `51820/udp` → `192.168.1.55` | WireGuard runs in **host** network mode. Not `.105` — that was the old macvlan address. |
+| Port forward | `443/tcp` → `192.168.1.55` | Nginx Proxy Manager: the public hosts, and `vpn.soaalex.com` (WireGuard over WebSocket, see [home-server/wstunnel/README.md](home-server/wstunnel/README.md)). |
+| Port forward | `443/udp` → `192.168.1.55` | Optional: WireGuard on UDP 443. The `wg0.conf` PostUp rule redirects it to 51820 (rule in the wstunnel README). |
 | Protect `.100` and `.56` | keep DHCP from leasing them | Pi-hole and the shim are static; DHCP knows nothing about them. A collision on `.100` takes **LAN-wide DNS down**. |
 | LAN DNS | `192.168.1.100` (Pi-hole) | |
 | DNS provider | Cloudflare — DNS, DDNS, CDN, WAF | `vpn.soaalex.com` must resolve to the WAN IP |
@@ -267,6 +269,7 @@ data, and the Vaultwarden vault. Empty ones mean §3 went wrong.
 | home-server | Pi-hole | `pihole/pihole` | — (macvlan `.100`) | `macvlan_net` |
 | home-server | Vaultwarden | `vaultwarden/server` | 83→80, 3012 | `home-server-network` |
 | home-server | WireGuard | `linuxserver/wireguard` | 51820/udp | **host** |
+| home-server | wstunnel | `ghcr.io/erebe/wstunnel` | 8480 (behind NPM) | **host** |
 | home-server | AIOStreams | `viren070/aiostreams` | 1080→3000 | `home-server-network`, `common-network` |
 | home-server | Frigate | `blakeblackshear/frigate` | 8971 | `home-server-network` |
 | teslamate | TeslaMate | `teslamate/teslamate` | 4000 | `default`, `common-network` |
@@ -296,6 +299,7 @@ Rebuild these in the NPM UI if `nginx-proxy-manager/data` is ever lost:
 | `nas.soaalex.com` | `https://192.168.1.55:9443` |
 | `homeassistant.soaalex.com` | `http://192.168.1.21:8123` |
 | `aiostreams.soaalex.com`, `*.aiostreams.soaalex.com` | `http://192.168.1.55:1080` |
+| `vpn.soaalex.com` | `http://192.168.1.55:8480` — Websockets Support **on**, own Let's Encrypt cert, HTTP/2 off, Advanced: `proxy_read_timeout 1d;` `proxy_send_timeout 1d;` (wstunnel, see [home-server/wstunnel/README.md](home-server/wstunnel/README.md)) |
 
 NPM reaches these over the LAN IP rather than container names because the services sit
 on different Docker networks. Putting NPM and its backends on one shared network would

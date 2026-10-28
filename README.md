@@ -56,6 +56,9 @@ LAN interface (`192.168.1.55`). Two consequences:
 | Frigate | `blakeblackshear/frigate` | 8971 | NVR; needs `/dev/dri/renderD128` |
 | PTZ preset | `python:3.12-alpine` | 8095 | Named CAM-PT2 positions for Home Assistant |
 
+Remote access from a network that blocks UDP (office Wi-Fi): WireGuard carried over HTTPS by
+wstunnel, with a macOS client and LaunchAgent. See **[home-server/wstunnel/README.md](home-server/wstunnel/README.md)**.
+
 ### TeslaMate (`teslamate/`)
 
 | Service | Image | Port |
@@ -91,7 +94,7 @@ Secrets are stored in `.env` files (git-ignored). Each stack has its own:
 | File | Variables |
 |------|-----------|
 | `common/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
-| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `CODE_SERVER_PASSWORD`, `PTZ_CAMERA_USER`, `PTZ_API_TOKEN` |
+| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `CODE_SERVER_PASSWORD`, `PTZ_CAMERA_USER`, `PTZ_API_TOKEN`, `WSTUNNEL_PATH_PREFIX` |
 | `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI` |
 | `maison/.env` | `DATABASE_URL`, `DISCORD_WEBHOOK_URL`, `ENRICH_TOKEN`, `IMAP_USER`, `IMAP_PASSWORD`, … |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
