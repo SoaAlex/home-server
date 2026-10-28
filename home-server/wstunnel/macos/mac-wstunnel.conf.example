@@ -1,0 +1,22 @@
+# WireGuard profile for a Mac that reaches the NAS through wstunnel.
+# Template without keys: the real file (mac-wstunnel.conf) holds the peer's private key and
+# stays in the git-ignored home-server/wireguard/clients/mac-wstunnel/ directory.
+# Use a peer of its own (home-server/wireguard/config/peerN/): two devices sharing one peer
+# kick each other off the tunnel.
+# Start wstunnel first (wstunnel-vpn.sh or the LaunchAgent), then switch this tunnel on.
+
+[Interface]
+PrivateKey = <contents of config/peerN/privatekey-peerN>
+Address = 10.13.13.X/32
+MTU = 1280
+# No DNS line: the Mac keeps the office DNS (intranet names).
+# No ListenPort: local UDP 51820 belongs to wstunnel.
+
+[Peer]
+PublicKey = <contents of config/server/publickey-server>
+PresharedKey = <contents of config/peerN/presharedkey-peerN>
+Endpoint = 127.0.0.1:51820
+# Split tunnel is mandatory: with 0.0.0.0/0 the wstunnel connection itself would be routed
+# into the tunnel (loop).
+AllowedIPs = 10.13.13.0/24, 192.168.1.0/24
+PersistentKeepalive = 25
