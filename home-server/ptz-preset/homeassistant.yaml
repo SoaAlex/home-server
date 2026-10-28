@@ -19,7 +19,7 @@
 #     (stops the mic and any SD-card recording, which Frigate-off does not).
 
 # --- secrets.yaml -----------------------------------------------------------
-# ptz_token: HnWiEl20FkxDokjPGxsuE9nC9nkHzTQF9echBLiCgag
+# ptz_token: <same value as PTZ_API_TOKEN in home-server/.env>
 
 # --- configuration.yaml -----------------------------------------------------
 rest_command:
