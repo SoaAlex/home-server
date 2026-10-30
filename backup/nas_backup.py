@@ -8,8 +8,9 @@ root-owned data, the repository itself) happens in throw-away containers built f
                  consistent SQLite copies, restic snapshot, copy of the new snapshots to Google Drive;
                  Discord alert on any failure or warning
   weekly         retention + prune, integrity check (1/8 of the data, rotating), restore test, Discord recap
-  monthly        RAID data (photos, documents, personal folders) straight to the Google Drive repository,
-                 off-site retention + prune, check of a 5 GB random sample, restore test from Google Drive, recap
+  monthly        RAID data (photos, documents, personal folders) straight to the Google Drive repository, one
+                 snapshot per folder, resumed after any interruption (memory pause, kill, restart); then off-site
+                 retention + prune, check of a 5 GB random sample, restore test from Google Drive, recap
   restore-test   restore the latest snapshot's databases and files into throw-away containers, compare with live
   offsite-init   create the Google Drive repository (same password, chunker parameters of the local one)
   offsite-copy   copy the last 7 days of nightly snapshots to Google Drive now
@@ -35,6 +36,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -70,6 +72,19 @@ OFFSITE_DNS = ["192.168.1.1", "8.8.8.8"]
 OFFSITE_DATA_RETENTION = ["--keep-monthly", "12", "--keep-yearly", "3"]
 OFFSITE_SAMPLE = 25  # files of the monthly data snapshot restored from Google Drive and compared with live
 PROGRESS = STATE / "monthly-progress.json"
+CAMPAIGN = STATE / "monthly-campaign.json"  # monthly upload under way: folders done, so that a restart resumes it
+LAST_COPY = STATE / "last-offsite-copy.json"
+# Memory (8 GB NAS, swap always nearly full): UGOS's earlyoom SIGKILLs the process with the highest OOM score as
+# soon as MemAvailable < 64 MiB. Every backup container runs with --oom-score-adj 1000 (it dies first, never
+# Hermes or a service); off-site ones also stop themselves (SIGTERM: restic exits cleanly) below MEM_YIELD
+# and only (re)start above MEM_RESUME.
+MEM_YIELD = 400 << 20
+MEM_RESUME = 900 << 20
+DATA_CONTAINER, COPY_CONTAINER = "nas-backup-offsite-data", "nas-backup-offsite-copy"
+MONTHLY_COPY = "nas-backup-monthly-copy"
+INTERRUPTED = {130, 137, 143, -9, -15}  # restic stopped by SIGINT/SIGTERM, container or docker client SIGKILLed
+SUMMARY_KEYS = ("snapshot_id", "files_new", "files_changed", "files_unmodified", "data_added", "data_added_packed",
+                "total_files_processed", "total_bytes_processed", "total_duration")
 DATED = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SAFE_NAME = re.compile(r"^[A-Za-z0-9_]+$")
 
@@ -190,7 +205,7 @@ def ensure_image() -> None:
 
 def box(shell: str, *args, binds=(), user=None) -> list:
     """Command running `shell` in a throw-away container of the backup image (no network)."""
-    cmd = ["docker", "run", "--rm", "--network", "none"]
+    cmd = ["docker", "run", "--rm", "--network", "none", "--oom-score-adj", "1000"]  # expendable: see MEM_YIELD
     if user:
         cmd += ["--user", user]
     for b in binds:
@@ -290,19 +305,20 @@ def history(kind=None, days=None) -> list:
     return rows
 
 
-def locked(fn, lock="lock"):
-    """Run fn under a lock file. The monthly upload (days) has its own lock, so nights are not blocked by it:
-    restic itself lets backup/copy share a repository and makes prune wait (--retry-lock)."""
+def locked(fn, lock="lock", wait_h=3):
+    """Run fn under a lock file: `lock` for the local jobs, `lock-offsite` for everything that uploads to
+    Google Drive (never two uploads at once). The monthly upload holds lock-offsite for days; the nights keep
+    running beside it (restic lets backups share a repository and makes prune wait: --retry-lock)."""
     STATE.mkdir(parents=True, exist_ok=True)
     with open(STATE / lock, "w") as fh:
-        deadline = time.time() + 3 * 3600
+        deadline = time.time() + wait_h * 3600
         while True:
             try:
                 fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
             except BlockingIOError:
                 if time.time() > deadline:
-                    raise StepError(f"another backup run still holds {lock} after 3 h")
+                    raise StepError(f"another backup run still holds {lock} after {wait_h} h")
                 time.sleep(30)
         return fn()
 
@@ -519,7 +535,7 @@ def nightly() -> int:
     ensure_image()
     steps = (("postgres", lambda: dump_postgres(day, rep)), ("sqlite", lambda: copy_sqlite(rep)),
              ("hermes", lambda: copy_hermes_dbs(rep)), ("restic", lambda: restic_backup(rep)),
-             ("offsite", lambda: offsite_copy(rep)))
+             ("offsite", lambda: nightly_offsite(rep)))
     for name, fn in steps:  # keep going after a failed step: back up whatever can be
         log(f"step {name}")
         try:
@@ -594,7 +610,8 @@ def restore_postgres(snap_dir: str, rep: dict) -> None:
     pg_image = run(["docker", "inspect", "-f", "{{.Config.Image}}", PG_CONTAINER],
                    capture_output=True, text=True).stdout.strip() or "postgres:17"
     subprocess.run(["docker", "rm", "-f", PG_TEST], capture_output=True)
-    run(["docker", "run", "-d", "--name", PG_TEST, "--network", "none", "-e", "POSTGRES_USER=restoretest",
+    run(["docker", "run", "-d", "--name", PG_TEST, "--network", "none", "--oom-score-adj", "1000",
+         "-e", "POSTGRES_USER=restoretest",
          "-e", f"POSTGRES_PASSWORD={secrets.token_hex(16)}", "-v", f"{SCRATCH}/pgdata:/var/lib/postgresql/data",
          "-v", f"{files}:/restore:ro", pg_image], capture_output=True, timeout=600)
     results, problems = {}, []
@@ -743,10 +760,10 @@ def weekly_message(rep: dict) -> str:
         night += (f" (dernière : {fr_date(last['date'])} à {last['started'][11:16]}, "
                   f"+{human(last['snapshot'].get('data_added_packed'))})")
     lines.append(night)
-    copies = [r for r in nights if (r.get("offsite") or {}).get("status") == "ok"]
-    lines.append(f"• Copie sur Google Drive : dernière le {fr_date(copies[-1]['date'])}" if copies
-                 else "• ⚠️ Copie sur Google Drive : aucune réussie sur 7 jours")
-    if (months := history("monthly", days=45)):
+    lines.append("• " + copy_line())
+    if (cl := campaign_line()):
+        lines.append("• " + cl)
+    elif (months := history("monthly", days=45)):
         state = {"ok": "OK", "warning": "avec avertissement", "failed": "en échec"}.get(months[-1].get("status"), "?")
         lines.append(f"• Données du RAID sur Google Drive : dernier envoi mensuel le {fr_date(months[-1]['date'])} ({state})")
     if (pl := progress_line()):
@@ -771,6 +788,113 @@ def weekly_message(rep: dict) -> str:
 
 # ---------------------------------------------------------------- off-site: Google Drive
 
+AUTH_HINT = ("Google refuse l'accès au Drive (jeton expiré ou révoqué) : vérifie que l'app OAuth « Hermes » est "
+             "« En production » (Google Auth Platform → Audience), puis lance `rclone config reconnect gdrive:` "
+             "sur le NAS")
+AUTH_ERROR = re.compile(r"invalid_grant|token (has been )?(expired|revoked)|cannot fetch token|config reconnect", re.I)
+
+
+class AuthError(StepError):
+    pass
+
+
+def check_auth(text: str) -> None:
+    """Raise AuthError (retrying makes no sense) when rclone reports a dead Google token."""
+    if AUTH_ERROR.search(text or ""):
+        raise AuthError(AUTH_HINT)
+
+
+def read_json(path: Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def write_json(path: Path, obj) -> None:
+    STATE.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def try_lock(name: str):
+    """The lock file `name`, held (an open file: close it to release), or None when another job holds it."""
+    STATE.mkdir(parents=True, exist_ok=True)
+    fh = open(STATE / name, "w")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fh
+    except BlockingIOError:
+        fh.close()
+        return None
+
+
+def fresh(name: str) -> str:
+    subprocess.run(["docker", "rm", "-f", name], capture_output=True)  # leftover of a killed run
+    return name
+
+
+def mem_available() -> int:
+    """MemAvailable in bytes (free RAM + what the kernel can reclaim without swapping)."""
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 1 << 50  # unknown: never block on it
+
+
+def wait_for_memory(max_wait: int, *, what: str, on_wait=None) -> None:
+    """Return once MemAvailable has stayed above MEM_RESUME for a minute, or after max_wait seconds anyway."""
+    deadline, streak, said = time.time() + max_wait, 0, False
+    while True:
+        streak = streak + 1 if mem_available() >= MEM_RESUME else 0
+        if streak >= 3:
+            return
+        if streak == 0 and not said:
+            said = True
+            log(f"{what}: waiting for memory ({human(mem_available())} available, {human(MEM_RESUME)} wanted)")
+            if on_wait:
+                on_wait()
+        if time.time() > deadline:
+            log(f"{what}: {human(mem_available())} available after {max_wait // 60} min of waiting, going on")
+            return
+        time.sleep(30)
+
+
+class MemoryGuard:
+    """While active, stop container `name` (docker stop = SIGTERM: restic exits cleanly, code 130) once
+    MemAvailable has stayed under MEM_YIELD for 15 s, well before earlyoom starts killing at 64 MiB."""
+
+    def __init__(self, name: str):
+        self.name, self.yielded = name, False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+
+    def _watch(self) -> None:
+        low = 0
+        while not self._stop.wait(5):
+            low = low + 1 if mem_available() < MEM_YIELD else 0
+            if low >= 3:
+                avail = mem_available()
+                if subprocess.run(["docker", "stop", "-t", "90", self.name], capture_output=True).returncode == 0:
+                    self.yielded = True
+                    log(f"memory low ({human(avail)} available): stopped {self.name} to leave room to the NAS")
+                    return
+                low = 0  # not started yet, or already gone
+
+    def __enter__(self):
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:  # never swallows an exception
+        self._stop.set()
+        self._thread.join(timeout=150)
+
+
 def fmt_int(n) -> str:
     return f"{int(n or 0):,}".replace(",", " ")
 
@@ -785,22 +909,32 @@ def fmt_duration(seconds) -> str:
 
 
 def snapshots(tag: str, *, offsite: bool) -> list:
-    p = run(restic_cmd(["snapshots", "--retry-lock", "1h", "--host", HOST, "--tag", tag, "--json"], offsite=offsite),
-            capture_output=True, text=True, timeout=1800)
+    try:
+        p = run(restic_cmd(["snapshots", "--retry-lock", "1h", "--host", HOST, "--tag", tag, "--json"],
+                           offsite=offsite), capture_output=True, text=True, timeout=1800)
+    except StepError as e:
+        if offsite:
+            check_auth(str(e))
+        raise
     return sorted(json.loads(p.stdout or "[]"), key=lambda s: s["time"])
 
 
-def offsite_copy(rep: dict) -> None:
+def offsite_copy(rep: dict, *, name: str = COPY_CONTAINER, max_wait: int = 1800) -> None:
     """Copy the nightly snapshots of the last 7 days to Google Drive (restic skips those already there),
     then check that every one of them has its copy."""
     since = time.time() - 7 * 86400
     local = [s for s in snapshots("nightly", offsite=False) if snapshot_epoch(s) >= since]
     if not local:
         raise StepError("no nightly snapshot of the last 7 days to copy")
-    name = "nas-backup-offsite-copy"
-    subprocess.run(["docker", "rm", "-f", name], capture_output=True)  # leftover of a killed run
-    p = run(restic_cmd(["copy", "--retry-lock", "2h", *[s["id"] for s in local]], name=name, offsite=True),
-            capture_output=True, text=True, timeout=4 * 3600)  # within the nightly unit's 8 h
+    wait_for_memory(max_wait, what="copy to Google Drive")
+    with MemoryGuard(name) as guard:
+        p = run(restic_cmd(["copy", "--retry-lock", "2h", *[s["id"] for s in local]], name=fresh(name), offsite=True),
+                capture_output=True, text=True, timeout=4 * 3600, check=False)  # within the nightly unit's 8 h
+    if guard.yielded:
+        raise StepError("stopped to leave memory to the NAS; the next copy takes over (restic resumes)")
+    if p.returncode != 0:
+        check_auth(p.stderr)
+        raise StepError(f"restic copy exit {p.returncode}: {p.stderr.strip()[-400:]}")
     copied = len(re.findall(r"^snapshot \S+ saved", p.stdout + p.stderr, re.M))
     remote = snapshots("nightly", offsite=True)
     originals = {s.get("original") or s["id"] for s in remote}
@@ -808,10 +942,25 @@ def offsite_copy(rep: dict) -> None:
     if missing:
         raise StepError(f"{len(missing)} snapshot(s) still missing on Google Drive: {', '.join(missing[:5])}")
     rep["offsite"] = {"status": "ok", "copied": copied, "remote_snapshots": len(remote), "at": now_iso()}
+    write_json(LAST_COPY, rep["offsite"])
     log(f"offsite: {copied} snapshot(s) copied to Google Drive, {len(remote)} nightly snapshots there")
 
 
-def run_stream(cmd: list, *, name: str, timeout: int, progress: Path | None = None):
+def nightly_offsite(rep: dict) -> None:
+    """Nightly step: copy the new snapshot to Google Drive, unless the monthly upload holds Google Drive (it
+    copies the nightly snapshots itself, before and after the data): never two uploads at once."""
+    fh = try_lock("lock-offsite")
+    if fh is None:
+        rep["offsite"] = {"status": "skipped", "reason": "monthly upload running"}
+        log("offsite: skipped, the monthly Google Drive upload is running and copies the nightly snapshots itself")
+        return
+    try:
+        offsite_copy(rep)
+    finally:
+        fh.close()
+
+
+def run_stream(cmd: list, *, name: str, timeout: int, progress: Path | None = None, label: dict | None = None):
     """Run a long `restic ... --json` without keeping its output in memory; the latest status line is
     written to `progress` once a minute. Returns (returncode, summary, errors, stderr)."""
     STATE.mkdir(parents=True, exist_ok=True)
@@ -835,8 +984,8 @@ def run_stream(cmd: list, *, name: str, timeout: int, progress: Path | None = No
                 elif kind == "error":
                     errors.append(f"{m.get('item', '?')}: {(m.get('error') or {}).get('message', '?')}")
                 elif kind == "status" and progress is not None and time.time() - last >= 60:
-                    progress.write_text(json.dumps({"started": started, "updated": now_iso(),
-                                                    **{k: m.get(k) for k in keys}}))
+                    write_json(progress, {"state": "running", **(label or {}), "started": started,
+                                          "updated": now_iso(), **{k: m.get(k) for k in keys}})
                     last = time.time()
                 if time.time() > deadline:
                     raise StepError(f"timeout after {timeout} s")
@@ -862,35 +1011,129 @@ def run_stream(cmd: list, *, name: str, timeout: int, progress: Path | None = No
     return p.returncode, summary, errors, stderr
 
 
-def offsite_data_backup(rep: dict) -> None:
-    """Back up the RAID data (paths-data.txt minus excludes-data.txt) straight to Google Drive."""
-    name = "nas-backup-offsite-data"
-    subprocess.run(["docker", "rm", "-f", name], capture_output=True)  # leftover of a killed run
+def data_groups(rep: dict) -> list:
+    """Folders of the monthly data backup, one restic snapshot each: one per line of paths-data.txt, a line
+    ending in "/*" giving one per sub-folder (personal folders: no names in this public repo). Paths written
+    as exact folders in excludes-data.txt are skipped; a missing path is a warning."""
+    wanted = [l.strip() for l in (HERE / "paths-data.txt").read_text(encoding="utf-8").splitlines()
+              if l.strip() and not l.strip().startswith("#")]
+    excluded = {l.strip().rstrip("/") for l in (HERE / "excludes-data.txt").read_text(encoding="utf-8").splitlines()
+                if l.strip().startswith("/") and not any(c in l for c in "*?[")}
+    script = ('for p in "$@"; do case "$p" in */\\*) for d in "${p%/*}"/*/; do [ -d "$d" ] && echo "${d%/}"; done ;; '
+              '*) if [ -e "$p" ]; then echo "$p"; else echo "MISSING $p"; fi ;; esac; done')
+    out = run(box(script, *wanted, binds=["/volume2:/volume2:ro"]), capture_output=True, text=True,
+              timeout=600).stdout
+    groups = []
+    for line in out.splitlines():
+        if line.startswith("MISSING "):
+            rep["warnings"].append(f"chemin absent : {line[8:]}")
+        elif line and line not in excluded and line not in groups:
+            groups.append(line)
+    if not groups:
+        raise StepError("nothing to back up: check paths-data.txt")
+    return groups
+
+
+def active_campaign() -> dict | None:
+    """The monthly upload under way (started less than 10 days ago and not finished), if any."""
+    c = read_json(CAMPAIGN)
+    if c and not c.get("finished") and time.time() - c.get("t0", 0) < 10 * 86400:
+        return c
+    return None
+
+
+def backup_group(path: str, label: str, camp: dict) -> dict:
+    """restic backup of one folder to Google Drive, started again after any interruption (memory pause,
+    earlyoom kill, crash): what was uploaded stays (restic writes its index every few minutes), only this
+    folder is read again. Returns the restic summary."""
     args = ["--host", HOST, "--tag", "monthly-data", "--exclude-file", "/run/nas-backup/excludes-data.txt",
-            "--exclude-caches", "--retry-lock", "2h", "--json"]
-    cmd = restic_cmd(args, name=name, offsite=True, binds=["/volume2:/volume2:ro"],
-                     shell=paths_script("/run/nas-backup/paths-data.txt"))
-    rc, summary, errors, stderr = run_stream(cmd, name=name, timeout=6 * 86400, progress=PROGRESS)
-    for line in stderr.splitlines():
-        if line.startswith("MISSING-PATH "):
-            rep["warnings"].append(f"chemin absent : {line.split(' ', 1)[1]}")
-    if rc == 3 and summary:
-        rep["warnings"].append(f"{len(errors)} fichier(s) illisible(s) : " + " ; ".join(errors[:5]))
-    elif rc != 0 or not summary:
-        raise StepError(f"restic backup exit {rc}: {stderr.strip()[-500:]}")
-    keys = ("snapshot_id", "files_new", "files_changed", "files_unmodified", "data_added", "data_added_packed",
-            "total_files_processed", "total_bytes_processed", "total_duration")
-    rep["data"] = {k: summary.get(k) for k in keys}
-    log(f"data: snapshot {str(summary.get('snapshot_id'))[:8]}, {summary.get('total_files_processed')} files, "
-        f"{human(summary.get('total_bytes_processed'))} read, {human(summary.get('data_added_packed'))} uploaded")
+            "--exclude-caches", "--retry-lock", "2h", "--json", path]
+    where = {"group": label, "path": path}
+    kills = fails = 0
+    while True:
+        wait_for_memory(8 * 3600, what=label, on_wait=lambda: write_json(PROGRESS, {
+            "state": "waiting", **where, "updated": now_iso()}))
+        cmd = restic_cmd(args, name=fresh(DATA_CONTAINER), offsite=True, binds=["/volume2:/volume2:ro"])
+        with MemoryGuard(DATA_CONTAINER) as guard:
+            try:
+                rc, summary, errors, stderr = run_stream(cmd, name=DATA_CONTAINER, timeout=5 * 86400,
+                                                         progress=PROGRESS, label=where)
+            except StepError as e:  # timeout
+                rc, summary, errors, stderr = -1, None, [], str(e)
+        if rc in (0, 3) and summary:
+            res = {k: summary.get(k) for k in SUMMARY_KEYS}
+            res["unreadable"] = len(errors) if rc == 3 else 0
+            res["unreadable_sample"] = errors[:3] if rc == 3 else []
+            return res
+        check_auth(stderr)
+        if guard.yielded:
+            camp["pauses"] = camp.get("pauses", 0) + 1
+            write_json(CAMPAIGN, camp)
+            continue  # the next round waits for memory first
+        if rc in INTERRUPTED:
+            kills += 1
+            camp["kills"] = camp.get("kills", 0) + 1
+            write_json(CAMPAIGN, camp)
+            if kills > 12:
+                raise StepError(f"{path}: interrupted {kills} times in a row (exit {rc}), left for next month")
+            log(f"{label}: restic interrupted (exit {rc}), again in 5 min")
+            time.sleep(300)
+            continue
+        fails += 1
+        if fails >= 3:
+            raise StepError(f"{path}: restic backup exit {rc}: {stderr.strip()[-400:]}")
+        log(f"{label}: restic backup exit {rc}, again in 10 min: {stderr.strip()[-200:]}")
+        time.sleep(600)
+
+
+def offsite_data_backup(rep: dict, camp: dict) -> None:
+    """Back up the RAID data straight to Google Drive, one snapshot per folder (data_groups), skipping the
+    folders this campaign has already sent."""
+    groups = data_groups(rep)
+    camp["groups"] = groups
+    write_json(CAMPAIGN, camp)
+    failed = []
+    try:
+        for k, path in enumerate(groups, 1):
+            if path in camp["done"]:
+                continue
+            label = f"dossier {k}/{len(groups)}"
+            log(f"data {label}: {path}")
+            try:
+                res = backup_group(path, label, camp)
+            except AuthError:
+                raise
+            except StepError as e:
+                failed.append(str(e)[:300])
+                log(f"data {label} FAILED: {e}")
+                continue
+            camp["done"][path] = {**res, "at": now_iso()}
+            write_json(CAMPAIGN, camp)
+            log(f"data {label}: snapshot {str(res.get('snapshot_id'))[:8]}, {res.get('total_files_processed')} files, "
+                f"{human(res.get('total_bytes_processed'))} read, {human(res.get('data_added_packed'))} uploaded")
+    finally:
+        PROGRESS.unlink(missing_ok=True)
+    done = [camp["done"][p] for p in groups if p in camp["done"]]
+    rep["data"] = {"folders": len(groups), "done": len(done), "pauses": camp.get("pauses", 0),
+                   "kills": camp.get("kills", 0),
+                   **{k: sum(d.get(k) or 0 for d in done)
+                      for k in ("total_files_processed", "total_bytes_processed", "data_added_packed")}}
+    if (n := sum(d.get("unreadable", 0) for d in done)):
+        sample = [e for d in done for e in d.get("unreadable_sample", [])]
+        rep["warnings"].append(f"{n} fichier(s) illisible(s), ignoré(s) : " + " ; ".join(sample)[:300])
+    if failed:
+        raise StepError(f"{len(failed)}/{len(groups)} dossier(s) non envoyé(s) : " + " ; ".join(failed))
 
 
 def offsite_forget_prune(rep: dict) -> None:
+    """Retention on Google Drive: the nightly copies as on the RAID, the data per folder (forget groups the
+    snapshots by host and paths)."""
+    wait_for_memory(8 * 3600, what="forget/prune")
     for tag, policy in (("nightly", RETENTION), ("monthly-data", OFFSITE_DATA_RETENTION)):
-        run(restic_cmd(["forget", "--retry-lock", "2h", "--host", HOST, "--tag", tag, *policy], offsite=True),
-            capture_output=True, timeout=3 * 3600)
-    run(restic_cmd(["prune", "--retry-lock", "2h", "--max-unused", "10%"], offsite=True),
-        capture_output=True, timeout=12 * 3600)
+        run(restic_cmd(["forget", "--retry-lock", "2h", "--host", HOST, "--tag", tag, *policy],
+                       name=fresh("nas-backup-monthly-prune"), offsite=True), capture_output=True, timeout=3 * 3600)
+    run(restic_cmd(["prune", "--retry-lock", "2h", "--max-unused", "10%"], name=fresh("nas-backup-monthly-prune"),
+                   offsite=True), capture_output=True, timeout=12 * 3600)
 
 
 def offsite_check(rep: dict) -> None:
@@ -899,8 +1142,9 @@ def offsite_check(rep: dict) -> None:
     Not in SCRATCH: the Sunday restore test may be using it at the same time."""
     sweep = ('find /cache /restic-tmp -maxdepth 1 -name "restic-check-cache-*" -mmin +2880 -exec rm -rf {} \\; ; '
              'exec restic "$@"')
-    run(restic_cmd(["check", "--retry-lock", "2h", "--read-data-subset", "5G"], offsite=True, shell=sweep),
-        capture_output=True, timeout=12 * 3600)
+    wait_for_memory(8 * 3600, what="check")
+    run(restic_cmd(["check", "--retry-lock", "2h", "--read-data-subset", "5G"], name=fresh("nas-backup-monthly-check"),
+                   offsite=True, shell=sweep), capture_output=True, timeout=12 * 3600)
 
 
 def dump_sha(snap: str, path: str, *, offsite: bool) -> tuple:
@@ -924,28 +1168,30 @@ def dump_sha(snap: str, path: str, *, offsite: bool) -> tuple:
     return h.hexdigest(), n
 
 
-def sample_files(snap: str, k: int, max_size: int = 256 << 20) -> list:
-    """k regular files picked at random (reservoir sampling over `restic ls --json`) in a Google Drive snapshot."""
+def sample_files(snaps: list, k: int, max_size: int = 256 << 20) -> list:
+    """k (snapshot, path) pairs of regular files picked at random (reservoir sampling over `restic ls --json`)
+    across the given Google Drive snapshots."""
     picked, seen, rng = [], 0, random.Random()
-    p = subprocess.Popen([str(c) for c in restic_cmd(["ls", "--json", snap], offsite=True)],
-                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    assert p.stdout is not None
-    for line in p.stdout:
-        try:
-            m = json.loads(line)
-        except ValueError:
-            continue
-        path = m.get("path", "")
-        if m.get("type") != "file" or not 0 < (m.get("size") or 0) <= max_size or "\n" in path or "|" in path:
-            continue
-        seen += 1
-        if len(picked) < k:
-            picked.append(path)
-        elif (j := rng.randrange(seen)) < k:
-            picked[j] = path
-    p.wait()
-    if p.returncode != 0:
-        raise StepError(f"restic ls {snap}: exit {p.returncode}")
+    for snap in snaps:
+        p = subprocess.Popen([str(c) for c in restic_cmd(["ls", "--json", snap], offsite=True)],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        assert p.stdout is not None
+        for line in p.stdout:
+            try:
+                m = json.loads(line)
+            except ValueError:
+                continue
+            path = m.get("path", "")
+            if m.get("type") != "file" or not 0 < (m.get("size") or 0) <= max_size or "\n" in path or "|" in path:
+                continue
+            seen += 1
+            if len(picked) < k:
+                picked.append((snap, path))
+            elif (j := rng.randrange(seen)) < k:
+                picked[j] = (snap, path)
+        p.wait()
+        if p.returncode != 0:
+            raise StepError(f"restic ls {snap}: exit {p.returncode}")
     return picked
 
 
@@ -953,6 +1199,7 @@ def offsite_restore_test(rep: dict) -> None:
     """1. The latest nightly copy on Google Drive is bit-identical to its original in the local repository
     (Postgres dumps and SQLite copies, compared as tar streams). 2. Random files of the latest RAID data
     snapshot, restored from Google Drive, match the live files (those modified since are skipped)."""
+    wait_for_memory(8 * 3600, what="restore test")
     res = rep.setdefault("offsite_restore", {})
     remote = snapshots("nightly", offsite=True)
     if not remote:
@@ -974,29 +1221,32 @@ def offsite_restore_test(rep: dict) -> None:
         total += remote_sum[1]
     res["nightly"] = {"snapshot": rs["short_id"], "bytes": total}
     log(f"offsite restore test: nightly copy {rs['short_id']} identical to the local backup ({human(total)})")
-    data = snapshots("monthly-data", offsite=True)
-    if not data:
+    latest = {}  # newest snapshot of each folder
+    for s in snapshots("monthly-data", offsite=True):
+        latest[tuple(s.get("paths") or ())] = s
+    if not latest:
         return
-    ds = data[-1]
-    sample = sample_files(ds["short_id"], OFFSITE_SAMPLE)
+    epoch = {s["short_id"]: snapshot_epoch(s) for s in latest.values()}
+    sample = sample_files(list(epoch), OFFSITE_SAMPLE)
     script = ('for p in "$@"; do if [ -f "$p" ]; then echo "$(stat -c %Y "$p")|$(sha256sum "$p" | cut -c1-64)|$p"; '
               'else echo "0||$p"; fi; done')
-    out = run(box(script, *sample, binds=["/volume2:/volume2:ro"]), capture_output=True, text=True, timeout=3600).stdout
+    out = run(box(script, *[p for _, p in sample], binds=["/volume2:/volume2:ro"]), capture_output=True, text=True,
+              timeout=3600).stdout
     live = {}
     for line in out.splitlines():
         mtime, digest, path = line.split("|", 2)
         live[path] = (int(mtime or 0), digest)
-    snap_t, same, changed, bad = snapshot_epoch(ds), 0, 0, []
-    for path in sample:
-        digest = dump_sha(ds["short_id"], path, offsite=True)[0]
+    same, changed, bad = 0, 0, []
+    for sid, path in sample:
+        digest = dump_sha(sid, path, offsite=True)[0]
         mtime, live_digest = live.get(path, (0, ""))
         if digest == live_digest:
             same += 1
-        elif not live_digest or mtime > snap_t:
+        elif not live_digest or mtime > epoch[sid]:
             changed += 1
         else:
             bad.append("/".join(path.split("/")[:4]) + "/…")  # top folders only: no private file names on Discord
-    res["data"] = {"snapshot": ds["short_id"], "files": len(sample), "identical": same, "changed_since": changed,
+    res["data"] = {"snapshots": len(epoch), "files": len(sample), "identical": same, "changed_since": changed,
                    "mismatch": len(bad)}
     log(f"offsite restore test: {same}/{len(sample)} random data files identical to live, {changed} changed since")
     if bad:
@@ -1010,25 +1260,51 @@ def offsite_stats(rep: dict) -> None:
 
 
 def monthly() -> int:
-    day = dt.date.today().isoformat()
-    rep = {"kind": "monthly", "date": day, "started": now_iso(), "warnings": [], "failed": {}}
-    t0 = time.time()
+    """The monthly campaign: the nightly copies first (the critical set), the RAID data folder by folder, the
+    nightly copies made meanwhile, retention, check, restore test, recap. A restarted run (systemd restarts it
+    after a kill) resumes the campaign: folders already sent are skipped."""
+    camp = active_campaign()
+    if camp:
+        log(f"resuming the campaign of {camp['started']}: {len(camp['done'])} folder(s) already sent")
+    else:
+        camp = {"started": now_iso(), "t0": time.time(), "done": {}, "finished": None}
+    camp["runs"] = camp.get("runs", 0) + 1
+    write_json(CAMPAIGN, camp)
+    rep = {"kind": "monthly", "date": dt.date.today().isoformat(), "started": camp["started"], "warnings": [],
+           "failed": {}}
     ensure_image()
-    steps = (("data", lambda: offsite_data_backup(rep)), ("forget", lambda: offsite_forget_prune(rep)),
-             ("check", lambda: offsite_check(rep)), ("restore", lambda: offsite_restore_test(rep)),
-             ("stats", lambda: offsite_stats(rep)))
+
+    def first_copy():  # a miss here is made up by the copy after the data
+        try:
+            offsite_copy(rep, name=MONTHLY_COPY, max_wait=8 * 3600)
+        except AuthError:
+            raise
+        except StepError as e:
+            log(f"first copy not done: {e}")
+
+    steps = (("copy", first_copy), ("data", lambda: offsite_data_backup(rep, camp)),
+             ("copy-end", lambda: offsite_copy(rep, name=MONTHLY_COPY, max_wait=8 * 3600)),
+             ("forget", lambda: offsite_forget_prune(rep)), ("check", lambda: offsite_check(rep)),
+             ("restore", lambda: offsite_restore_test(rep)), ("stats", lambda: offsite_stats(rep)))
     for name, fn in steps:
         log(f"step {name}")
         try:
             fn()
+        except AuthError as e:
+            rep["failed"][name] = str(e)
+            log(f"step {name} FAILED: Google refused the token, stopping here")
+            break
         except Exception as e:
             rep["failed"][name] = f"{type(e).__name__}: {e}"[:600]
             log(f"step {name} FAILED: {rep['failed'][name]}")
+    camp["finished"] = now_iso()
+    write_json(CAMPAIGN, camp)
     rep["status"] = "failed" if rep["failed"] else "warning" if rep["warnings"] else "ok"
-    rep["duration_s"] = round(time.time() - t0)
+    rep["duration_s"] = round(time.time() - camp["t0"])
+    rep["runs"] = camp["runs"]
     record(rep)
     discord(monthly_message(rep))
-    log(f"done: {rep['status']} in {rep['duration_s']} s")
+    log(f"done: {rep['status']} after {fmt_duration(rep['duration_s'])} ({camp['runs']} run(s))")
     return 1 if rep["status"] == "failed" else 0
 
 
@@ -1037,12 +1313,16 @@ def monthly_message(rep: dict) -> str:
     lines = [f"{icon} **Sauvegarde hors site (Google Drive) : récap du mois** ({fr_date(rep['date'])})"]
     d = rep.get("data") or {}
     if d:
-        lines.append(f"• Données du RAID : {fmt_int(d.get('total_files_processed'))} fichiers, "
-                     f"{human(d.get('total_bytes_processed'))} lus, +{human(d.get('data_added_packed'))} envoyés "
-                     f"en {fmt_duration(d.get('total_duration'))}")
-    copies = [r for r in history("nightly", days=7) if (r.get("offsite") or {}).get("status") == "ok"]
-    if copies:
-        lines.append(f"• Copies de nuit (bases, config, Hermes) : dernière le {fr_date(copies[-1]['date'])}")
+        extra = [f"{d['pauses']} pause(s) pour laisser de la mémoire"] if d.get("pauses") else []
+        extra += [f"{d['kills']} reprise(s) après un arrêt brutal"] if d.get("kills") else []
+        lines.append(f"• Données du RAID : {d.get('done')}/{d.get('folders')} dossiers, "
+                     f"{fmt_int(d.get('total_files_processed'))} fichiers, {human(d.get('total_bytes_processed'))} "
+                     f"lus, +{human(d.get('data_added_packed'))} envoyés en {fmt_duration(rep.get('duration_s'))}" +
+                     (f" ({', '.join(extra)})" if extra else ""))
+    lc = read_json(LAST_COPY) or {}
+    if lc.get("at"):
+        lines.append(f"• Copies de nuit (bases, config, Hermes) : dernière le {fr_date(lc['at'][:10])}, "
+                     f"{lc.get('remote_snapshots', '?')} sur Google Drive")
     st, sn = rep.get("stats") or {}, rep.get("snapshots") or {}
     if st:
         lines.append(f"• Dépôt Google Drive : {human(st.get('total_size'))}, {sn.get('monthly-data', '?')} sauvegarde(s) "
@@ -1062,17 +1342,43 @@ def monthly_message(rep: dict) -> str:
 
 
 def progress_line() -> str | None:
-    if not PROGRESS.exists():
+    g = read_json(PROGRESS)
+    if not g:
         return None
-    try:
-        g = json.loads(PROGRESS.read_text())
-    except ValueError:
-        return None
+    where = f"{g.get('group', '?')} ({g.get('path', '?')})"
+    if g.get("state") == "waiting":
+        return (f"envoi vers Google Drive, {where} : en pause, attend de la mémoire libre "
+                f"[depuis {g.get('updated', '?')[11:16]}]")
     pct = 100 * (g.get("percent_done") or 0)
     left = g.get("seconds_remaining")
-    return (f"envoi des données du RAID vers Google Drive : {pct:.0f} % ({human(g.get('bytes_done'))} sur "
+    return (f"envoi vers Google Drive, {where} : {pct:.0f} % ({human(g.get('bytes_done'))} sur "
             f"{human(g.get('total_bytes'))})" + (f", reste ~{fmt_duration(left)}" if left else "") +
             f" [mis à jour {g.get('updated', '?')[11:16]}]")
+
+
+def copy_line() -> str:
+    """When the nightly set last reached Google Drive (whichever job copied it), for the recaps and `status`."""
+    at = (read_json(LAST_COPY) or {}).get("at")
+    if at and time.time() - dt.datetime.fromisoformat(at).timestamp() < 3 * 86400:
+        return f"Copie sur Google Drive : dernière le {fr_date(at[:10])}"
+    last = f"dernière le {fr_date(at[:10])}" if at else "aucune encore"
+    if active_campaign():
+        return f"Copie sur Google Drive : faite par l'envoi mensuel en cours ({last})"
+    return f"⚠️ Copie sur Google Drive : {last}"
+
+
+def campaign_line() -> str | None:
+    c = active_campaign()
+    if not c:
+        return None
+    done, total = len(c.get("done") or {}), len(c.get("groups") or []) or "?"
+    state = subprocess.run(["systemctl", "--user", "is-active", "nas-backup-monthly.service"],
+                           capture_output=True, text=True).stdout.strip()
+    since = fr_date(c["started"][:10])
+    if state in ("active", "activating", "reloading"):
+        return f"Envoi mensuel du RAID vers Google Drive en cours depuis le {since} : {done}/{total} dossiers envoyés"
+    return (f"⚠️ Envoi mensuel du RAID interrompu (commencé le {since}, {done}/{total} dossiers) : "
+            "`systemctl --user start nas-backup-monthly` le reprend")
 
 
 # ---------------------------------------------------------------- CLI
@@ -1089,6 +1395,9 @@ def status() -> int:
             print(f"    failed {k}: {v[:200]}")
         for w in (r.get("warnings") or [])[:5]:
             print(f"    warning: {w[:200]}")
+    print(copy_line())
+    if (cl := campaign_line()):
+        print(cl)
     if (pl := progress_line()):
         print("running: " + pl)
     return 0
@@ -1114,7 +1423,7 @@ def main() -> int:
     if a.command == "weekly":
         return locked(weekly)
     if a.command == "monthly":
-        return locked(monthly, lock="lock-monthly")
+        return locked(monthly, lock="lock-offsite", wait_h=6)
     if a.command == "offsite-init":
         ensure_image()
         if subprocess.run([str(c) for c in restic_cmd(["cat", "config"], offsite=True)],
@@ -1140,7 +1449,7 @@ def main() -> int:
             record(rep)
             print(json.dumps({k: v for k, v in rep.items() if k not in ("kind", "date")}, indent=2, ensure_ascii=False))
             return 1 if rep["failed"] else 0
-        return locked(one_shot, lock="lock" if a.command == "offsite-copy" else "lock-offsite-test")
+        return locked(one_shot, lock="lock-offsite")
 
     def only_restore():
         rep = {"kind": "restore-test", "date": dt.date.today().isoformat(), "started": now_iso(),
