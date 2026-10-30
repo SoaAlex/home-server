@@ -1046,7 +1046,7 @@ def backup_group(path: str, label: str, camp: dict) -> dict:
     """restic backup of one folder to Google Drive, started again after any interruption (memory pause,
     earlyoom kill, crash): what was uploaded stays (restic writes its index every few minutes), only this
     folder is read again. Returns the restic summary."""
-    args = ["--host", HOST, "--tag", "monthly-data", "--exclude-file", "/run/nas-backup/excludes-data.txt",
+    args = ["backup", "--host", HOST, "--tag", "monthly-data", "--exclude-file", "/run/nas-backup/excludes-data.txt",
             "--exclude-caches", "--retry-lock", "2h", "--json", path]
     where = {"group": label, "path": path}
     kills = fails = 0
