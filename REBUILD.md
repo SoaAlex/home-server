@@ -43,6 +43,9 @@ the Hermes agent in `~/.hermes`, `~/.ssh`, the user systemd units), Frigate reco
 at 07:00). Neither copy includes the Docker named volumes (so no database), and both sit
 on the same NAS.
 
+The Hermes agent's configuration is also kept, encrypted, in [`hermes-vault/`](hermes-vault/README.md)
+(restore steps there; the private key is not on the NAS).
+
 ---
 
 ## 2. Before you wipe

@@ -12,7 +12,8 @@ docker/
 ├── teslamate/           Tesla vehicle tracking & Grafana dashboards
 ├── qbittorrent/         Torrent client (managed by the UGOS app, not compose)
 ├── maison/              Private house-search crawler + UI (port 8090, LAN/VPN only) — see maison/README.md
-└── eurl-frais/          Monthly EURL expenses CLI (Orange invoices, rent receipt, summary → Discord) — see eurl-frais/README.md
+├── eurl-frais/          Monthly EURL expenses CLI (Orange invoices, rent receipt, summary → Discord) — see eurl-frais/README.md
+└── hermes-vault/        Encrypted configuration of the Hermes agent (age, post-quantum) — see hermes-vault/README.md
 ```
 
 To rebuild everything after an OS reset or NAS swap, follow **[REBUILD.md](REBUILD.md)**.
