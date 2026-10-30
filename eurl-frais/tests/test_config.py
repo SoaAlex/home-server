@@ -21,8 +21,8 @@ FULL = {
 def test_loads_paths_amounts_and_defaults():
     config = load_config(FULL)
 
-    assert config.template_path == Path("/eurl/LOYER/QUITTANCE DE LOYER.docx")
-    assert config.orange_dir == Path("/eurl/CHARGES/ORANGE")
+    assert config.template_path == Path("/eurl/LOYER/Modèle quittance loyer bureau EURL.docx")
+    assert config.orange_dir == Path("/eurl/CHARGES/Orange")
     assert config.orange_share == Decimal("0.80")
     assert config.fixed_charges == (("Gaz", Decimal("10.00")), ("Électricité", Decimal("5.00")))
     assert config.orange_expected_invoices == 2
@@ -54,3 +54,12 @@ def test_missing_credentials_are_reported_as_absent():
     config = load_config({**FULL, "ORANGE_PASSWORD": ""})
 
     assert config.has_orange_credentials is False
+
+
+def test_legacy_template_and_orange_folder_win_when_they_exist(tmp_path):
+    (tmp_path / "LOYER").mkdir(); (tmp_path / "CHARGES" / "ORANGE").mkdir(parents=True)
+    (tmp_path / "LOYER" / "QUITTANCE DE LOYER.docx").write_bytes(b"x")
+    config = load_config({**FULL, "EURL_LOYER_DIR": str(tmp_path / "LOYER"), "EURL_CHARGES_DIR": str(tmp_path / "CHARGES")})
+
+    assert config.template_path.name == "QUITTANCE DE LOYER.docx"
+    assert config.orange_dir.name == "ORANGE"

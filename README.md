@@ -70,7 +70,7 @@ wstunnel, with a macOS client and LaunchAgent. See **[home-server/wstunnel/READM
 ### EURL expenses (`eurl-frais/`)
 
 One-shot CLI container (no port), run on the 10th of each month by a Hermes cron job through
-`/workspace/bin/eurl-frais monthly`. Mounts only `OneDrive/TRAVAIL/EURL/{LOYER,CHARGES}`.
+`/workspace/bin/eurl-frais monthly`. Mounts only `CLOUD_NAS/05-Travail/<EURL folder>/{Loyer,Charges}` (the NAS folder synced with OneDrive; host path = `EURL_CLOUD_DIR` in the git-ignored `eurl-frais/.env`).
 
 ### qBittorrent (`qbittorrent/`)
 

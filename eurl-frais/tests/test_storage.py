@@ -26,11 +26,11 @@ def test_archive_name_carries_issue_date_service_and_amount(tmp_path):
     result = store_orange_pdf(invoice(), content, tmp_path)
 
     assert result.created is True
-    assert result.path.name == "2026-09-05_Orange_internet_39,99EUR.pdf"
+    assert result.path.name == "2026-09-05 - Facture Orange internet fibre 39,99€.pdf"
     assert result.path.read_bytes() == content
 
 
-def test_collect_reads_canonical_names_without_parsing_the_pdf(tmp_path):
+def test_collect_reads_legacy_canonical_names_without_parsing_the_pdf(tmp_path):
     (tmp_path / "2026-09-07_Orange_internet_1045,99EUR.pdf").write_bytes(b"%PDF-1.5 no text layer")
     (tmp_path / "2026-10-06_Orange_mobile_21,00EUR.pdf").write_bytes(b"%PDF-1.5 other month")
 
@@ -95,8 +95,29 @@ def test_collect_keeps_only_invoices_issued_in_month_and_dedupes(tmp_path, invoi
     assert sorted(inv.invoice_id for inv, _path in found) == ["OR-A-0001", "OR-B-0002"]
     assert [path.name for _inv, path in found if path.name.startswith("copie")] == []
     assert len(problems) == 1 and "illisible.pdf" in problems[0]
-    assert "AAAA-MM-JJ_Orange_" in problems[0]  # tells how to rename an unreadable invoice
+    assert "AAAA-MM-JJ - Facture Orange " in problems[0]  # tells how to rename an unreadable invoice
 
 
 def test_collect_on_missing_directory_returns_nothing(tmp_path):
     assert collect_month_invoices(tmp_path / "absent", 2026, 9) == ([], [])
+
+
+def test_collect_reads_new_names_without_parsing_the_pdf(tmp_path):
+    (tmp_path / "2026-09-07 - Facture Orange mobile 26,78€.pdf").write_bytes(b"%PDF-1.5 no text layer")
+    (tmp_path / "2026-09-08 - Facture Orange 12,00€.pdf").write_bytes(b"%PDF-1.5 generic")
+
+    found, problems = collect_month_invoices(tmp_path, 2026, 9)
+
+    assert [(i.service, i.issue_date, i.total_ttc) for i, _ in found] == [
+        ("mobile", date(2026, 9, 7), Decimal("26.78")), ("orange", date(2026, 9, 8), Decimal("12.00"))]
+    assert problems == []
+
+
+def test_invoice_archived_under_the_legacy_name_is_not_duplicated(tmp_path):
+    legacy = tmp_path / "2026-09-05_Orange_internet_39,99EUR.pdf"
+    legacy.write_bytes(b"%PDF-1.4\nold archive")
+
+    again = store_orange_pdf(invoice(), b"%PDF-1.4\nnew download", tmp_path)
+
+    assert again.created is False and again.path == legacy
+    assert [p.name for p in tmp_path.iterdir()] == [legacy.name]

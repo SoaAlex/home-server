@@ -56,6 +56,11 @@ class Block:
 
 
 def rent_receipt_filename(year: int, month: int) -> str:
+    return f"{year:04d}-{month:02d} - Quittance loyer bureau EURL.pdf"
+
+
+def legacy_rent_receipt_filename(year: int, month: int) -> str:
+    """Name used before the CLOUD_NAS reorganisation (2026-10-30): still counts as an issued receipt."""
     return f"QUITTANCE DE LOYER {ascii_upper(month_name_fr(month))} {year:04d}.pdf"
 
 
