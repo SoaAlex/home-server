@@ -78,3 +78,10 @@ maison/.scratch/
 # Maison — données personnelles (critères, adresses, annonces réelles)
 maison/config/criteria.yaml
 maison/tests/fixtures/
+
+# OS / Python noise
+.DS_Store
+__pycache__/
+
+# aiometadata runtime data (its *.cache files are covered by *.cache above)
+home-server/aiometadata/data/imdb-ratings.bin
