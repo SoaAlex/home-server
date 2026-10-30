@@ -2,20 +2,22 @@
 
 How to bring the whole Docker stack back after an **OS reset** or a **NAS replacement**.
 
-> **Scope.** Assumes `/volume1` is intact (RAID 5 survived, or you copied it to the new NAS).
-> Everything under `/volume1` — this repo, all bind-mount data, and all Docker named
-> volumes — comes back with it. This runbook covers the parts that *don't*.
+> **Scope.** Assumes the disks survived (OS reset, or disks moved to a new NAS).
+> `/volume1` is a **single NVMe SSD with no redundancy**: this repo, all bind-mount data,
+> every `.env` file and the Docker root (`/volume1/@docker`, named volumes included) live
+> there and come back only if that disk does. `/volume2` and `/home` are the 4-disk
+> **RAID 5** pool (btrfs). This runbook covers the parts that live elsewhere.
 >
-> RAID 5 is redundancy, not backup. It does not protect against accidental deletion,
-> ransomware, filesystem corruption, or theft. If `/volume1` is genuinely gone, this
-> runbook is not enough — you need the `.env` files and `home-server/wireguard/` from
-> somewhere else, and both are git-ignored.
+> RAID 5 is redundancy, not backup, and it does not cover `/volume1` at all. It does not
+> protect against accidental deletion, ransomware, filesystem corruption, or theft. If
+> `/volume1` is genuinely gone, this runbook is not enough — you need the `.env` files,
+> `home-server/wireguard/` and the database dumps from a backup; none of them is in git.
 
 ---
 
 ## 1. What survives vs. what you rebuild
 
-**Survives (all on `/volume1`)**
+**Lives on `/volume1` (single SSD: comes back only if that disk survives)**
 
 | Path | Contents |
 |---|---|
@@ -24,7 +26,7 @@ How to bring the whole Docker stack back after an **OS reset** or a **NAS replac
 | `/volume1/docker/home-server/vw-data/` | Vaultwarden vault |
 | `/volume1/docker/home-server/nginx-proxy-manager/` | Proxy hosts DB + Let's Encrypt certs |
 | `/volume1/docker/home-server/pihole/` | Blocklists, query history |
-| `/volume1/@docker/volumes/` | `common_postgres-data`, `teslamate_teslamate-db`, `teslamate_teslamate-grafana-data` |
+| `/volume1/@docker/volumes/` | `common_postgres-data` (every database: TeslaMate, maison, AIOStreams, AIOMetadata), `common_redis-data`, `teslamate_teslamate-grafana-data` (+ the retired, unused `teslamate_teslamate-db`) |
 
 **Must be rebuilt (lives outside `/volume1`)**
 
@@ -33,9 +35,13 @@ How to bring the whole Docker stack back after an **OS reset** or a **NAS replac
 3. `/etc/systemd/system/macvlan-shim.service`
 4. Router configuration (§7)
 
-`/volume2` is a **separate pool** and holds Frigate recordings
-(`/volume2/NAS-STORAGE/frigate`). Confirm its redundancy separately — volume1's RAID
-says nothing about it.
+`/volume2` is the **RAID 5 pool** (4 disks, btrfs). It holds `/home` (the user home:
+the Hermes agent in `~/.hermes`, `~/.ssh`, the user systemd units), Frigate recordings
+(`/volume2/NAS-STORAGE/frigate`) and today's on-box copies of `/volume1/docker`
+(`NAS-STORAGE/TechnicalBackups/docker`, written by a root cron job at 02:00, and
+`NAS-STORAGE/docker-backup`, written by the UGOS Sync & Backup task "docker auto backup"
+at 07:00). Neither copy includes the Docker named volumes (so no database), and both sit
+on the same NAS.
 
 ---
 
@@ -43,7 +49,8 @@ says nothing about it.
 
 Copy off the NAS, or confirm they're in the repo:
 
-- [ ] `common/.env`, `home-server/.env`, `teslamate/.env`, `home-server/aiostreams/.env` — git-ignored
+- [ ] `common/.env`, `home-server/.env`, `home-server/aiostreams/.env`, `home-server/aiometadata/.env`, `teslamate/.env`, `maison/.env`, `eurl-frais/.env` — git-ignored
+- [ ] A fresh `pg_dump -Fc` of each database in `common-postgres` (`teslamate`, `maison`, `aiostreams`, `aiometadata`) — the named volume lives on the SSD
 - [ ] `home-server/wireguard/` — git-ignored; losing it means **reconfiguring every VPN client device** (it also holds the Mac wstunnel kit, `clients/mac-wstunnel/`)
 - [ ] Router settings (§7) — recorded nowhere on the NAS
 - [ ] `docker volume ls` output, to verify nothing is missing afterwards
@@ -164,7 +171,8 @@ unit that reasserts the drop-in and reloads `ssh.service`, same pattern as §5.
 cd /volume1/docker/common      && docker compose up -d
 cd /volume1/docker/home-server && docker compose up -d
 cd /volume1/docker/teslamate   && docker compose up -d
-cd /volume1/docker/minecraft   && docker compose up -d   # optional
+cd /volume1/docker/maison      && docker compose up -d
+# eurl-frais is a one-shot CLI run monthly by a Hermes cron job: nothing to start
 ```
 
 Each stack needs its `.env` present first:
@@ -172,9 +180,12 @@ Each stack needs its `.env` present first:
 | File | Variables |
 |---|---|
 | `common/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
-| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD` |
+| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `CODE_SERVER_PASSWORD`, `PTZ_API_TOKEN`, `PTZ_CAMERA_USER`, `WSTUNNEL_PATH_PREFIX` |
 | `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI` |
+| `home-server/aiometadata/.env` | `PORT`, `HOST_NAME`, `NODE_ENV`, `LOG_LEVEL`, `DATABASE_URI`, `REDIS_URL`, `ADMIN_KEY` |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
+| `maison/.env` | `DATABASE_URL`, `TEST_DATABASE_URL`, `DISCORD_WEBHOOK_URL`, `ENRICH_TOKEN`, `PUBLIC_BASE_URL`, `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD`, `TZ` |
+| `eurl-frais/.env` | `ORANGE_USERNAME`, `ORANGE_PASSWORD`, `ORANGE_EXPECTED_INVOICES`, `ORANGE_SHARE`, `GAS_MONTHLY_EUR`, `ELECTRICITY_MONTHLY_EUR`, `RENT_PAYMENT_DAY`, `DISCORD_WEBHOOK_URL`, `EURL_CLOUD_DIR` |
 
 `teslamate/.env` Postgres credentials must match `common/.env` — TeslaMate connects to
 the shared `common-postgres`, not a database of its own.
@@ -275,7 +286,7 @@ data, and the Vaultwarden vault. Empty ones mean §3 went wrong.
 | teslamate | TeslaMate | `teslamate/teslamate` | 4000 | `default`, `common-network` |
 | teslamate | Grafana | `teslamate/grafana` | 3000 | `default`, `common-network` |
 | teslamate | Mosquitto | `eclipse-mosquitto:2` | 1883 | `default` |
-| minecraft | Minecraft | `itzg/minecraft-server` | 39999→25565 | `default` |
+| maison | Web UI + collector | `maison` (built locally) | 8090 | `common-network` |
 
 Frigate needs `/dev/dri/renderD128` (N100 iGPU, VAAPI + OpenVINO) — verify it exists on
 new hardware.
@@ -307,8 +318,15 @@ let the `ports:` publishing be dropped — see "Known issues".
 
 ### PostgreSQL restore
 
+Every database lives in `common-postgres` (named volume `common_postgres-data`, on the SSD).
+Do **not** restore from `NAS-STORAGE/TechnicalBackups/teslamate_backup.sql`: the root cron
+job that writes it still targets the retired `teslamate-database-1` container, so it has
+produced an empty file every night since TeslaMate moved to `common-postgres`.
+
+Restore a custom-format dump (`pg_dump -Fc`) into the running server:
+
 ```bash
-docker exec -i common-postgres psql -U teslamate teslamate < /volume2/NAS-STORAGE/TechnicalBackups/teslamate_backup.sql
+docker exec -i common-postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d teslamate --clean --if-exists' < teslamate.dump
 ```
 
 ---
@@ -327,7 +345,7 @@ docker exec -i common-postgres psql -U teslamate teslamate < /volume2/NAS-STORAG
 
 ### Cleanup backlog
 
-- `version: '3.8'` in `home-server/` and `minecraft/` is obsolete and warns on every command
+- `version: '3.8'` in `home-server/` is obsolete and warns on every command
 - Postgres (`5000`) and Mosquitto (`1883`) publish to the whole LAN though their consumers share `common-network` — drop those `ports:` blocks
 - `aio_network` is a stray Docker network with 0 containers — `docker network prune`
 - `home-server/frigate/config/backup.db` is runtime state and should be git-ignored
@@ -335,5 +353,5 @@ docker exec -i common-postgres psql -U teslamate teslamate < /volume2/NAS-STORAG
 
 ---
 
-> **Note:** this file documents LAN topology, hostnames, and internal IPs. Scrub it
-> before making the repo public.
+> **Note:** this repo is public. This file documents LAN topology, hostnames and private
+> (RFC 1918 / ULA) addresses only: never add secrets or personal data here.
