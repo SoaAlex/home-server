@@ -64,7 +64,7 @@ def manual_auth_required(url: str, text: str) -> bool:
     if any(token in probe for token in _HUMAN_CHECKS):
         raise ManualAuthRequired(
             "Orange demande une validation humaine (code SMS, CAPTCHA ou validation sur mobile) : "
-            "lancer `eurl-frais orange --month AAAA-MM` en supervision ou déposer les PDF dans CHARGES/ORANGE."
+            "lancer `eurl-frais orange --month AAAA-MM` en supervision ou déposer les PDF dans Charges/Orange."
         )
     return False
 

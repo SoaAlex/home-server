@@ -33,7 +33,7 @@ def _parser() -> argparse.ArgumentParser:
     receipt.add_argument("--month", required=True, help="mois du loyer AAAA-MM")
     receipt.add_argument("--payment-date", type=date.fromisoformat)
     receipt.add_argument("--issued-on", type=date.fromisoformat, help="date d'émission (défaut : aujourd'hui)")
-    receipt.add_argument("--output", help="chemin sous EURL, ex. 'LOYER/QUITTANCE DE LOYER FEVRIER - CORRIGEE.pdf'")
+    receipt.add_argument("--output", help="chemin sous EURL, ex. 'LOYER/2026-02 - Quittance loyer bureau EURL - corrigée.pdf'")
 
     orange = commands.add_parser("orange", help="télécharger et archiver seulement les factures Orange d'un mois de frais")
     orange.add_argument("--month", help="mois des frais AAAA-MM (défaut : mois précédent) ; factures émises le mois suivant")

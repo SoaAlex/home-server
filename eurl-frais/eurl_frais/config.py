@@ -36,6 +36,15 @@ def _integer(env: Mapping[str, str], key: str, default: int, low: int, high: int
     return value
 
 
+# Current names first (CLOUD_NAS reorganised on 2026-10-30), then the legacy ones still honoured if present.
+TEMPLATE_NAMES = ("Modèle quittance loyer bureau EURL.docx", "QUITTANCE DE LOYER.docx")
+ORANGE_DIR_NAMES = ("Orange", "ORANGE")
+
+
+def _first_existing(root: Path, names: tuple[str, ...]) -> Path:
+    return next((root / name for name in names if (root / name).exists()), root / names[0])
+
+
 @dataclass(frozen=True)
 class Config:
     loyer_dir: Path
@@ -52,11 +61,11 @@ class Config:
 
     @property
     def template_path(self) -> Path:
-        return self.loyer_dir / "QUITTANCE DE LOYER.docx"
+        return _first_existing(self.loyer_dir, TEMPLATE_NAMES)
 
     @property
     def orange_dir(self) -> Path:
-        return self.charges_dir / "ORANGE"
+        return _first_existing(self.charges_dir, ORANGE_DIR_NAMES)
 
     @property
     def has_orange_credentials(self) -> bool:

@@ -12,6 +12,7 @@ from eurl_frais.rent_pdf import (
     RentTemplateError,
     default_payment_date,
     generate_rent_receipt,
+    legacy_rent_receipt_filename,
     rent_receipt_filename,
     template_rent_amount,
 )
@@ -101,8 +102,9 @@ def test_explicit_payment_date_is_used(tmp_path):
 
 
 def test_filename_uses_unaccented_french_month_and_year():
-    assert rent_receipt_filename(2026, 9) == "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf"
-    assert rent_receipt_filename(2027, 2) == "QUITTANCE DE LOYER FEVRIER 2027.pdf"
+    assert rent_receipt_filename(2026, 9) == "2026-09 - Quittance loyer bureau EURL.pdf"
+    assert rent_receipt_filename(2027, 2) == "2027-02 - Quittance loyer bureau EURL.pdf"
+    assert legacy_rent_receipt_filename(2027, 2) == "QUITTANCE DE LOYER FEVRIER 2027.pdf"
 
 
 def test_default_payment_date_is_the_configured_day_of_next_month():

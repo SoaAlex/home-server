@@ -21,7 +21,7 @@ def env(tmp_path):
     loyer, charges, state = tmp_path / "LOYER", tmp_path / "CHARGES", tmp_path / "state"
     for directory in (loyer, charges, state):
         directory.mkdir()
-    shutil.copy(make_template(tmp_path), loyer / "QUITTANCE DE LOYER.docx")
+    shutil.copy(make_template(tmp_path), loyer / "Modèle quittance loyer bureau EURL.docx")
     return {
         "EURL_LOYER_DIR": str(loyer), "EURL_CHARGES_DIR": str(charges), "EURL_STATE_DIR": str(state),
         "ORANGE_USERNAME": "user", "ORANGE_PASSWORD": "secret", "ORANGE_SHARE": "0.80",
@@ -78,14 +78,14 @@ def test_complete_month_archives_everything_and_notifies_once(env):
     assert run(env, sender=sender) == 0
 
     orange = sorted(p.name for p in (load_config(env).orange_dir).iterdir())
-    assert orange == ["2026-10-05_Orange_internet_49,99EUR.pdf", "2026-10-05_Orange_mobile_15,99EUR.pdf"]
-    receipt = load_config(env).loyer_dir / "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf"
+    assert orange == ["2026-10-05 - Facture Orange internet fibre 49,99€.pdf", "2026-10-05 - Facture Orange mobile 15,99€.pdf"]
+    receipt = load_config(env).loyer_dir / "2026-09 - Quittance loyer bureau EURL.pdf"
     receipt_text = " ".join(PdfReader(receipt).pages[0].extract_text().split())
     assert "Date du paiement : 06/10/2026" in receipt_text and "le 10/10/2026." in receipt_text
     assert not (load_config(env).charges_dir / "RAPPORTS").exists()  # the Discord message is the report
     (content, files), *comments = sender.calls
-    assert files == ["QUITTANCE DE LOYER SEPTEMBRE 2026.pdf", "2026-10-05_Orange_internet_49,99EUR.pdf",
-                     "2026-10-05_Orange_mobile_15,99EUR.pdf"]
+    assert files == ["2026-09 - Quittance loyer bureau EURL.pdf", "2026-10-05 - Facture Orange internet fibre 49,99€.pdf",
+                     "2026-10-05 - Facture Orange mobile 15,99€.pdf"]
     assert "COMPLET" in content and "67,78" in content and "200,00" in content and "267,78" in content
     assert "Orange Internet — facture du 05/10/2026 : 49,99" in content and "39,99" in content and "12,79" in content
     # One plain message per Tiime comment, right after the report: Discord mobile copies whole messages only.
@@ -112,7 +112,7 @@ def test_portal_amount_absent_from_the_pdf_text_is_quarantined(env):
 
     assert run(env, sender=sender, downloader=downloader_for(wrong, TWO_INVOICES[1])) == 3
 
-    assert sorted(p.name for p in load_config(env).orange_dir.iterdir()) == ["2026-10-05_Orange_mobile_15,99EUR.pdf"]
+    assert sorted(p.name for p in load_config(env).orange_dir.iterdir()) == ["2026-10-05 - Facture Orange mobile 15,99€.pdf"]
     assert "49,99" in sender.calls[0][0] and "a-verifier" in sender.calls[0][0]
 
 
@@ -146,7 +146,7 @@ def test_pdf_without_text_layer_keeps_the_portal_amount(env):
                 PortalInvoice(mobile, "mobile", date(2026, 10, 5), Decimal("15.99"), "c2")]
 
     assert run(env, downloader=download) == 0
-    assert "2026-10-07_Orange_internet_44,44EUR.pdf" in [p.name for p in load_config(env).orange_dir.iterdir()]
+    assert "2026-10-07 - Facture Orange internet fibre 44,44€.pdf" in [p.name for p in load_config(env).orange_dir.iterdir()]
 
 
 def test_second_run_does_not_resend(env):
@@ -179,7 +179,7 @@ def test_dry_run_writes_nothing_and_sends_nothing(env):
 
     config = load_config(env)
     assert sender.calls == [] and downloader.calls == []
-    assert sorted(p.name for p in config.loyer_dir.iterdir()) == ["QUITTANCE DE LOYER.docx"]
+    assert sorted(p.name for p in config.loyer_dir.iterdir()) == ["Modèle quittance loyer bureau EURL.docx"]
     assert list(config.charges_dir.iterdir()) == []
 
 
@@ -204,19 +204,19 @@ def test_orange_blocking_is_reported_and_not_fatal(env):
     assert run(env, sender=sender, downloader=blocked) == 3
     assert "code SMS" in sender.calls[0][0]
     assert load_config(env).orange_dir.is_dir()  # ready for a manual drop
-    assert (load_config(env).loyer_dir / "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf").is_file()
+    assert (load_config(env).loyer_dir / "2026-09 - Quittance loyer bureau EURL.pdf").is_file()
 
 
 def test_receipt_is_not_issued_before_the_payment_date(env):
     sender = Sender()
 
     assert run(env, sender=sender, today=date(2026, 10, 3)) == 3
-    assert not (load_config(env).loyer_dir / "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf").exists()
+    assert not (load_config(env).loyer_dir / "2026-09 - Quittance loyer bureau EURL.pdf").exists()
     assert "06/10/2026" in sender.calls[0][0]
 
 
 def test_existing_receipt_is_kept(env):
-    receipt = load_config(env).loyer_dir / "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf"
+    receipt = load_config(env).loyer_dir / "2026-09 - Quittance loyer bureau EURL.pdf"
     receipt.write_bytes(b"%PDF-manual")
 
     assert run(env) == 0
@@ -240,7 +240,7 @@ def test_orange_command_takes_the_expense_month(env, capsys):
 
 
 def test_monthly_crash_posts_an_alert_on_discord(env):
-    (load_config(env).loyer_dir / "QUITTANCE DE LOYER.docx").unlink()
+    load_config(env).template_path.unlink()
     sender = Sender()
 
     assert main(["monthly", "--month", "2026-09"], env=env, today=TODAY,
@@ -251,10 +251,10 @@ def test_monthly_crash_posts_an_alert_on_discord(env):
 
 def test_quittance_command_writes_a_corrected_copy_and_never_overwrites(env):
     args = ["quittance", "--month", "2026-02", "--payment-date", "2026-03-06", "--issued-on", "2026-03-06",
-            "--output", "LOYER/QUITTANCE DE LOYER FEVRIER - CORRIGEE.pdf"]
+            "--output", "LOYER/2026-02 - Quittance loyer bureau EURL - corrigée.pdf"]
 
     assert main(args, env=env, today=TODAY) == 0
-    copy = load_config(env).loyer_dir / "QUITTANCE DE LOYER FEVRIER - CORRIGEE.pdf"
+    copy = load_config(env).loyer_dir / "2026-02 - Quittance loyer bureau EURL - corrigée.pdf"
     text = " ".join(PdfReader(copy).pages[0].extract_text().split())
     assert "[01/02/2026] au : [28/02/2026]" in text and "le 06/03/2026." in text
     assert main(args, env=env, today=TODAY) == 1
@@ -264,3 +264,26 @@ def test_quittance_command_refuses_paths_outside_loyer_and_charges(env):
     args = ["quittance", "--month", "2026-02", "--payment-date", "2026-03-06", "--output", "../evil.pdf"]
 
     assert main(args, env=env, today=TODAY) == 2
+
+
+def test_receipt_with_the_legacy_name_counts_as_issued(env):
+    # Receipts generated before the CLOUD_NAS reorganisation keep their old name.
+    legacy = load_config(env).loyer_dir / "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf"
+    legacy.write_bytes(b"%PDF-legacy")
+    sender = Sender()
+
+    assert run(env, sender=sender) == 0
+    assert legacy.read_bytes() == b"%PDF-legacy"
+    assert not (load_config(env).loyer_dir / "2026-09 - Quittance loyer bureau EURL.pdf").exists()
+    assert "QUITTANCE DE LOYER SEPTEMBRE 2026.pdf" in sender.calls[0][1]
+
+
+def test_legacy_template_and_orange_folder_are_still_used(env):
+    config = load_config(env)
+    config.template_path.rename(config.loyer_dir / "QUITTANCE DE LOYER.docx")
+    (config.charges_dir / "ORANGE").mkdir()
+
+    assert run(env) == 0
+    assert sorted(p.name for p in (config.charges_dir / "ORANGE").iterdir()) == [
+        "2026-10-05 - Facture Orange internet fibre 49,99€.pdf", "2026-10-05 - Facture Orange mobile 15,99€.pdf"]
+    assert not (config.charges_dir / "Orange").exists()

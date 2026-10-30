@@ -27,13 +27,32 @@ class StoredFile:
 
 # Archive name = metadata (issue date, service, TTC amount), readable by the user and by collect_month_invoices
 # without parsing the PDF: Orange PDFs have a column layout, and a renamed manual drop works the same way.
-CANONICAL_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_Orange_(internet|mobile|orange)_(\d+,\d{2})EUR\.pdf$")
-RENAME_HINT = "renommer le PDF en AAAA-MM-JJ_Orange_<internet|mobile>_<montant TTC>EUR.pdf pour le prendre en compte"
+# Current form « 2026-10-05 - Facture Orange internet fibre 43,35€.pdf » (CLOUD_NAS naming since 2026-10-30);
+# the legacy « 2026-10-05_Orange_internet_43,35EUR.pdf » is still read.
+CANONICAL_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2}) - Facture Orange(?: (internet fibre|mobile))? (\d+,\d{2})€\.pdf$")
+LEGACY_CANONICAL_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})_Orange_(internet|mobile|orange)_(\d+,\d{2})EUR\.pdf$")
+SERVICE_NAMES = {"internet": "internet fibre", "mobile": "mobile"}
+RENAME_HINT = ("renommer le PDF en « AAAA-MM-JJ - Facture Orange <internet fibre|mobile> <montant TTC>€.pdf » "
+               "pour le prendre en compte")
+
+
+def _amount(invoice: OrangeInvoice) -> str:
+    return f"{invoice.total_ttc:.2f}".replace(".", ",")
 
 
 def canonical_name(invoice: OrangeInvoice) -> str:
-    amount = f"{invoice.total_ttc:.2f}".replace(".", ",")
-    return f"{invoice.issue_date:%Y-%m-%d}_Orange_{invoice.service}_{amount}EUR.pdf"
+    service = SERVICE_NAMES.get(invoice.service)
+    label = f"Facture Orange {service}" if service else "Facture Orange"
+    return f"{invoice.issue_date:%Y-%m-%d} - {label} {_amount(invoice)}€.pdf"
+
+
+def legacy_canonical_name(invoice: OrangeInvoice) -> str:
+    return f"{invoice.issue_date:%Y-%m-%d}_Orange_{invoice.service}_{_amount(invoice)}EUR.pdf"
+
+
+def _match(name: str) -> re.Match[str] | None:
+    return CANONICAL_RE.match(name) or LEGACY_CANONICAL_RE.match(name)
 
 
 def _from_canonical_name(path: Path, match: re.Match[str]) -> OrangeInvoice:
@@ -41,6 +60,7 @@ def _from_canonical_name(path: Path, match: re.Match[str]) -> OrangeInvoice:
     if not content.startswith(b"%PDF"):
         raise InvoiceParseError("ce fichier n'est pas un PDF")
     year, month, day, service, amount = match.groups()
+    service = {"internet fibre": "internet", None: "orange"}.get(service, service)
     try:
         issued = date(int(year), int(month), int(day))
     except ValueError as exc:
@@ -76,6 +96,9 @@ def store_orange_pdf(invoice: OrangeInvoice, content: bytes, orange_dir: str | P
     if invoice.sha256 and invoice.sha256 != digest:
         raise InvoiceConflict("Le PDF ne correspond pas à la facture analysée")
     destination = Path(orange_dir) / canonical_name(invoice)
+    legacy = Path(orange_dir) / legacy_canonical_name(invoice)
+    if not destination.exists() and legacy.exists():
+        destination = legacy
     if destination.exists():
         # Same issue date, service and amount = same invoice. Orange regenerates some PDFs on each
         # download (different bytes): the copy already archived (or dropped by hand) is kept untouched.
@@ -100,10 +123,10 @@ def collect_month_invoices(
     # Canonical names first so they win over manual copies of the same file.
     paths = sorted(
         (p for p in root.iterdir() if p.is_file() and p.suffix.lower() == ".pdf" and not p.name.startswith(".")),
-        key=lambda p: (not CANONICAL_RE.match(p.name), p.name),
+        key=lambda p: (not _match(p.name), p.name),
     )
     for path in paths:
-        match = CANONICAL_RE.match(path.name)
+        match = _match(path.name)
         try:
             invoice = _from_canonical_name(path, match) if match else parse_invoice_pdf(path)
         except (InvoiceParseError, OSError) as exc:

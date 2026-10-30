@@ -18,7 +18,10 @@ from .discord_delivery import send_discord
 from .domain import format_eur, month_name_fr, orange_invoice_month
 from .invoice_parser import InvoiceParseError, OrangeInvoice, pdf_text
 from .orange_portal import OrangePortalError, download_invoices
-from .rent_pdf import default_payment_date, generate_rent_receipt, rent_receipt_filename, template_rent_amount
+from .rent_pdf import (
+    default_payment_date, generate_rent_receipt, legacy_rent_receipt_filename, rent_receipt_filename,
+    template_rent_amount,
+)
 from .storage import InvoiceConflict, collect_month_invoices, store_orange_pdf
 from .summary import MonthlySummary, build_summary
 
@@ -140,7 +143,7 @@ def discord_message(summary: MonthlySummary, *, receipt_name: str | None, paymen
     if summary.problems:
         lines += ["", "⚠️ Points d'attention :"] + [f"• {problem}" for problem in summary.problems]
     if receipt_name or summary.orange_lines:
-        lines += ["", "📎 Justificatifs joints : quittance et factures Orange (archivés dans EURL/LOYER et EURL/CHARGES/ORANGE)."]
+        lines += ["", "📎 Justificatifs joints : quittance et factures Orange (archivés dans EURL/Loyer et EURL/Charges/Orange)."]
     if summary.tiime_comments:
         lines.append("💬 Commentaires Tiime des lignes Orange : à copier dans les messages suivants.")
     return "\n".join(lines)
@@ -186,12 +189,15 @@ def run_monthly(
                     problems.append(f"Orange : erreur inattendue ({type(exc).__name__}: {str(exc)[:200]})")
             else:
                 problems.append("Orange : identifiants absents du .env — seules les factures déjà déposées "
-                                "dans CHARGES/ORANGE sont prises en compte")
+                                "dans Charges/Orange sont prises en compte")
         invoices, parse_problems = collect_month_invoices(config.orange_dir, invoice_year, invoice_month)
         problems += parse_problems
 
         rent_amount = template_rent_amount(config.template_path)
         receipt_path = config.loyer_dir / rent_receipt_filename(year, month)
+        legacy_receipt = config.loyer_dir / legacy_rent_receipt_filename(year, month)
+        if not receipt_path.exists() and legacy_receipt.exists():
+            receipt_path = legacy_receipt
         receipt_state = _state_path(config, "receipts", year, month)
         recorded = _read_state(receipt_state)
         payment = payment_date or (

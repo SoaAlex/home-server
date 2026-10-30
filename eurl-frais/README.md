@@ -5,12 +5,13 @@ Conteneur CLI (aucun port publié) lancé le 10 de chaque mois par une tâche He
 
 1. télécharge les factures Orange (Internet + Mobile) émises en **M+1**, le mois courant du passage normal,
    depuis l'espace client (Playwright : chaque contrat, page « historique des factures ») et les archive dans
-   `EURL/CHARGES/ORANGE/AAAA-MM-JJ_Orange_<internet|mobile>_<TTC>EUR.pdf` (ex. `2026-09-07_Orange_mobile_12,34EUR.pdf`).
+   `EURL/Charges/Orange/AAAA-MM-JJ - Facture Orange <internet fibre|mobile> <TTC>€.pdf` (ex. `2026-09-07 - Facture Orange mobile 12,34€.pdf`).
+   L'ancien format `AAAA-MM-JJ_Orange_<internet|mobile>_<TTC>EUR.pdf` (dossier `ORANGE`) est toujours lu.
    Date, service et montant viennent de l'espace client ; le montant doit aussi figurer dans le texte du PDF, sinon
    la facture est mise de côté dans `state/orange/a-verifier/` et non comptée. Jamais d'écrasement : une facture
    déjà archivée (même nom) est conservée telle quelle, Orange régénérant certains PDF à chaque téléchargement ;
-2. émet la quittance du loyer de M (`EURL/LOYER/QUITTANCE DE LOYER <MOIS> <AAAA>.pdf`) en recopiant le modèle Word
-   `LOYER/QUITTANCE DE LOYER.docx` (textes, gras/italique, filets, signature) ; seules la période, la date de paiement
+2. émet la quittance du loyer de M (`EURL/Loyer/AAAA-MM - Quittance loyer bureau EURL.pdf` ; une quittance à l'ancien nom `QUITTANCE DE LOYER <MOIS> <AAAA>.pdf` compte comme déjà émise) en recopiant le modèle Word
+   `Loyer/Modèle quittance loyer bureau EURL.docx` (ou l'ancien `QUITTANCE DE LOYER.docx`) (textes, gras/italique, filets, signature) ; seules la période, la date de paiement
    (par défaut le `RENT_PAYMENT_DAY` de M+1) et la date d'émission (jour du passage) changent ;
 3. publie le rapport directement dans un message Discord (pas de PDF de rapport) : note « Charges <Mois> » =
    quote-part `ORANGE_SHARE` du TTC de chaque facture Orange (arrondie au centime) + forfaits gaz/électricité,
@@ -37,10 +38,10 @@ Depuis le sandbox Hermes, le wrapper `/workspace/bin/eurl-frais` exécute
 eurl-frais monthly --dry-run                 # simulation : n'écrit rien, n'envoie rien
 eurl-frais monthly                           # frais du mois précédent
 eurl-frais monthly --month 2026-09           # loyer septembre + factures Orange émises en octobre
-eurl-frais monthly --skip-orange             # n'utilise que les PDF déjà déposés dans CHARGES/ORANGE
+eurl-frais monthly --skip-orange             # n'utilise que les PDF déjà déposés dans Charges/Orange
 eurl-frais orange --month 2026-09 --debug     # Orange d'octobre pour les frais de septembre + captures privées
 eurl-frais quittance --month 2026-02 --payment-date 2026-03-06 --issued-on 2026-03-06 \
-    --output 'LOYER/QUITTANCE DE LOYER FEVRIER - CORRIGEE.pdf'   # copie corrigée, jamais d'écrasement
+    --output 'LOYER/2026-02 - Quittance loyer bureau EURL - corrigée.pdf'   # copie corrigée, jamais d'écrasement
 ```
 
 Codes de sortie : `0` complet, `3` incomplet (facture Orange manquante ou quittance pas encore due), `1` erreur,
@@ -50,8 +51,8 @@ Codes de sortie : `0` complet, `3` incomplet (facture Orange manquante ou quitta
 
 Code SMS, CAPTCHA ou validation sur mobile ne sont jamais contournés : le rapport part en **INCOMPLET** avec la
 raison. Solutions : relancer `eurl-frais orange --month AAAA-MM --debug` en supervision, ou déposer les PDF de
-factures dans `EURL/CHARGES/ORANGE/` puis `eurl-frais monthly --month AAAA-MM --skip-orange`. Le plus sûr est de
-les nommer `AAAA-MM-JJ_Orange_<internet|mobile>_<TTC>EUR.pdf` (lu sans analyser le PDF) ; un autre nom est
+factures dans `EURL/Charges/Orange/` puis `eurl-frais monthly --month AAAA-MM --skip-orange`. Le plus sûr est de
+les nommer `AAAA-MM-JJ - Facture Orange <internet fibre|mobile> <TTC>€.pdf` (lu sans analyser le PDF) ; un autre nom est
 analysé (texte du PDF) et signalé s'il est illisible. La session Orange est conservée dans `state/orange/`.
 La sélection Orange se fait par **date d'émission en M+1**, tandis que la quittance et les titres
 « Charges <Mois> » / « Loyer <Mois> » restent en M. Exemple : passage en octobre = quittance de septembre

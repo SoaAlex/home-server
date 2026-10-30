@@ -17,6 +17,8 @@ services:
     volumes:
       - ./:/app:ro
       # Seuls dossiers EURL accessibles (lecture/écriture) : LOYER et CHARGES.
-      - /volume2/NAS-STORAGE/OneDrive/TRAVAIL/EURL/LOYER:/eurl/LOYER:rw
-      - /volume2/NAS-STORAGE/OneDrive/TRAVAIL/EURL/CHARGES:/eurl/CHARGES:rw
+      # Dossier synchronisé OneDrive : CLOUD_NAS, réorganisé le 2026-10-30 (ancienne arborescence TRAVAIL/EURL/{LOYER,CHARGES}).
+      # Chemin hôte du dossier de l'EURL : EURL_CLOUD_DIR dans .env (non versionné, nom de la société).
+      - ${EURL_CLOUD_DIR:?EURL_CLOUD_DIR missing in .env}/Loyer:/eurl/LOYER:rw
+      - ${EURL_CLOUD_DIR:?EURL_CLOUD_DIR missing in .env}/Charges:/eurl/CHARGES:rw
       - ./state:/state:rw
