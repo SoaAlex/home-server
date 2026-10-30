@@ -7,23 +7,12 @@ mqtt:
   port: 1883
   client_id: frigate
 
-# ---------------------------------------------------------------------------
-# Detection: OpenVINO on the N100 iGPU (/dev/dri/renderD128, passed in compose).
-# The bundled ssdlite_mobilenet_v2 needs no download and runs at ~10ms/inference
-# on this GPU - plenty for one camera at 5 detect fps.
-# ---------------------------------------------------------------------------
+# Object detection is disabled. Keep Frigate's required detector backend
+# minimal and idle instead of loading the OpenVINO GPU model.
 detectors:
-  ov:
-    type: openvino
-    device: GPU
-
-model:
-  width: 300
-  height: 300
-  input_tensor: nhwc
-  input_pixel_format: bgr
-  path: /openvino-model/ssdlite_mobilenet_v2.xml
-  labelmap_path: /openvino-model/coco_91cl_bkgr.txt
+  cpu:
+    type: cpu
+    num_threads: 1
 
 # ---------------------------------------------------------------------------
 # go2rtc restream: one RTSP connection to the camera, fanned out to detect,
@@ -45,7 +34,7 @@ ffmpeg:
   hwaccel_args: preset-vaapi
 
 detect:
-  enabled: true
+  enabled: false
   fps: 5
 
 # Nothing is kept beyond 14 days. Every retention window is capped at the same
@@ -66,7 +55,7 @@ record:
       mode: motion
 
 snapshots:
-  enabled: true
+  enabled: false
   bounding_box: true
   retain:
     default: 14
@@ -96,6 +85,6 @@ cameras:
       host: 192.168.1.29
       port: 80
       user: soaalex
-      password: "{FRIGATE_RTSP_PASSWORD}"
+      password: '{FRIGATE_RTSP_PASSWORD}'
 
-version: 0.17-0
+version: 0.18-0

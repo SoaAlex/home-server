@@ -10,7 +10,6 @@ docker/
 ├── common/              Shared infrastructure (PostgreSQL)
 ├── home-server/         Core services (reverse proxy, DNS, VPN, passwords, streaming)
 ├── teslamate/           Tesla vehicle tracking & Grafana dashboards
-├── minecraft/           Minecraft server (CurseForge modpack)
 ├── qbittorrent/         Torrent client (managed by the UGOS app, not compose)
 ├── maison/              Private house-search crawler + UI (port 8090, LAN/VPN only) — see maison/README.md
 └── eurl-frais/          Monthly EURL expenses CLI (Orange invoices, rent receipt, summary → Discord) — see eurl-frais/README.md
