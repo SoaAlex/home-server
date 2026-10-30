@@ -27,26 +27,31 @@ Drive account, rclone remote `gdrive` in `~/.config/rclone/rclone.conf`, own OAu
 chunker parameters (created with `nas-backup offsite-init`).
 
 - **Every night**, after the local snapshot: `restic copy` of the nightly snapshots of the last 7 days
-  (those already there are skipped). A failed copy is a warning; the weekly recap shows the last good one.
-- **Every month (1st, 01:00):** a `monthly-data` snapshot of the RAID data ([`paths-data.txt`](paths-data.txt):
-  every personal folder of `/volume2/@home` including *Photos archivées*, `/volume2/Photos`,
-  `/volume2/Photos Partages`, `NAS-STORAGE`), minus [`excludes-data.txt`](excludes-data.txt): recycle bins,
-  Frigate recordings, the `CRACKS` games, the old on-box docker copies, Homebrew, caches. Then `forget --prune`
-  (nightly copies: same retention as local; data: 12 monthly + 3 yearly), `check` with a fresh cache and 5 GB
-  of data read at random, a restore test from Google Drive (the latest nightly copy must be bit-identical to
-  the local backup; 25 random data files must match the live ones) and a recap on Discord.
+  (those already there are skipped), unless the monthly upload is running: it copies them itself, before and
+  after the data. A failed copy is a warning; the weekly recap shows the last good one.
+- **Every month (1st, 01:00):** the RAID data ([`paths-data.txt`](paths-data.txt): `/volume2/Photos`,
+  `/volume2/Photos Partages`, `NAS-STORAGE`, then every personal folder of `/volume2/@home` including
+  *Photos archivées*), minus [`excludes-data.txt`](excludes-data.txt): recycle bins, Frigate recordings, the
+  `CRACKS` games, the old on-box docker copies, Homebrew, caches. One `monthly-data` snapshot per folder, so
+  that an interrupted upload reads one folder again, not the whole RAID. Then `forget --prune` (nightly copies:
+  same retention as local; data: 12 monthly + 3 yearly per folder), `check` with a fresh cache and 5 GB of
+  data read at random, a restore test from Google Drive (the latest nightly copy must be bit-identical to the
+  local backup; 25 random data files must match the live ones) and a recap on Discord.
+- **Interruptions:** the job keeps its progress in `~/.local/state/nas-backup/monthly-campaign.json`. A killed
+  restic starts again 5 min later; a killed job is restarted by systemd 15 min later (`Restart=on-abnormal`,
+  at most 12 starts in 10 days) and skips the folders already sent; what was uploaded stays (restic writes
+  its index every few minutes). Never two Google Drive uploads at once (lock file `lock-offsite`).
 - **Bandwidth:** Google accepts at most 750 GB of uploads per account and per day. rclone is capped at
   3 MiB/s from 08:00 to 23:00 and 12 MiB/s at night (`OFFSITE_BWLIMIT`, ~580 GB/day); the first data upload
-  (~1.2 TB, started 2026-10-30) takes two to three days. `nas-backup status` shows its progress;
-  `systemctl --user stop nas-backup-monthly` stops it (restarting resumes: what is uploaded stays).
-- **Resources:** the NAS has 8 GB of RAM and runs with its swap full; UGOS's `earlyoom` SIGKILLs the process
-  with the highest OOM score once free RAM falls under 64 MiB. Every restic container therefore runs with
-  `--oom-score-adj 1000` (the backup is killed first, never Hermes or a service), off-site ones also with
-  `--cpu-shares 256`, a 1 GB cap and `GOMEMLIMIT=400MiB`. restic's temporary pack files go to
-  `/volume2/@nas-backup/tmp` (RAID) for every job, never to the container layer on the SSD.
-- **Status (2026-10-30):** the monthly timer is disabled. Its first run, started next to a manual
-  `offsite-copy`, drove earlyoom into killing the Hermes gateway for 20 minutes; to be re-enabled once the data
-  upload survives a kill (retry) and never overlaps another off-site job.
+  (~1.1 TB, started 2026-10-30) takes two to four days. `nas-backup status` shows its progress;
+  `systemctl --user stop nas-backup-monthly` stops it, `start` resumes it.
+- **Memory:** the NAS has 8 GB of RAM and its swap (zram + eMMC) is nearly full most of the time; UGOS's
+  `earlyoom` SIGKILLs the process with the highest OOM score once MemAvailable falls under 64 MiB. Every backup
+  container runs with `--oom-score-adj 1000` (the backup is killed first, never Hermes or a service). The
+  off-site containers also stop themselves (SIGTERM: restic exits cleanly) when MemAvailable stays under
+  400 MiB and start again only above 900 MiB; they run with `--cpu-shares 256`, a 1 GB cap and
+  `GOMEMLIMIT=400MiB`. restic's temporary pack files go to `/volume2/@nas-backup/tmp` (RAID) for every job,
+  never to the container layer on the SSD.
 
 ## Where
 

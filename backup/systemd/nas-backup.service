@@ -1,11 +1,16 @@
 [Unit]
 Description=NAS backup: Postgres dumps, SQLite copies and restic snapshot to the RAID
 Documentation=file:///volume1/docker/backup/README.md
+StartLimitIntervalSec=12h
+StartLimitBurst=2
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 -I /volume1/docker/backup/nas_backup.py run
 # restic runs in containers outside this unit: stopping the unit must stop them too
 ExecStopPost=-/usr/bin/docker rm -f nas-backup-restic nas-backup-offsite-copy
+# killed (earlyoom) -> one more try half an hour later
+Restart=on-abnormal
+RestartSec=30min
 Nice=10
 TimeoutStartSec=8h
