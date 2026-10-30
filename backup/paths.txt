@@ -1,0 +1,43 @@
+# Saved every night (paths as seen inside the backup container, which mounts them read-only at the
+# same place; host /etc and /var/spool/cron appear under /hostfs). A missing path is skipped with a warning.
+
+# Services: compose files, .env, bind-mounted data, WireGuard keys, certificates, maison photos
+/volume1/docker
+# Docker named volumes (common_postgres-data is covered by the dumps below, not by its raw files)
+/volume1/@docker/volumes/teslamate_teslamate-grafana-data
+/volume1/@docker/volumes/common_redis-data
+/volume1/@docker/volumes/teslamate_teslamate-db
+# Virtual machines (Home Assistant OS, Windows XP); a running VM's disk is skipped that night
+/volume1/@kvm
+# One .dump per Postgres database (+ roles) and consistent copies of the SQLite databases
+/volume2/NAS-STORAGE/TechnicalBackups/postgres
+/volume2/@nas-backup/staging
+# Hermes agent (config, memories, skills, sessions; code and toolchains are reinstalled) and user config
+/home/soaalex/.hermes
+/home/soaalex/.ssh
+/home/soaalex/.config
+/home/soaalex/.local/bin
+/home/soaalex/.local/state
+/home/soaalex/.claude
+/home/soaalex/.claude.json
+/home/soaalex/.codex
+/home/soaalex/.gemini
+/home/soaalex/.copilot
+/home/soaalex/.docker
+/home/soaalex/.kube
+/home/soaalex/.gitconfig
+/home/soaalex/.zshrc
+/home/soaalex/.zshenv
+/home/soaalex/.p10k.zsh
+/home/soaalex/.profile
+/home/soaalex/.bashrc
+/home/soaalex/.zsh_history
+# Host settings: Docker daemon, macvlan shim (Pi-hole), SSH host keys, shares, root crontab
+/hostfs/etc/docker
+/hostfs/etc/systemd/system/macvlan-shim.service
+/hostfs/etc/ssh
+/hostfs/etc/hosts
+/hostfs/etc/fstab
+/hostfs/etc/samba/smbshare.conf
+/hostfs/etc/samba/smbglb.conf
+/hostfs/var/spool/cron/crontabs

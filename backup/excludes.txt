@@ -1,0 +1,37 @@
+# restic exclude patterns (one per line; a pattern without "/" matches that name anywhere).
+
+# Re-downloadable or rebuilt
+node_modules
+__pycache__
+.pytest_cache
+.venv
+/home/soaalex/.hermes/tools
+/home/soaalex/.hermes/hermes-agent
+/home/soaalex/.hermes/cache
+/home/soaalex/.hermes/installs
+/home/soaalex/.hermes/lsp
+/home/soaalex/.claude/remote
+/home/soaalex/.codex/packages
+/home/soaalex/.codex/.tmp
+/home/soaalex/.gemini/bin
+/volume1/docker/home-server/frigate/config/model_cache
+/volume1/docker/home-server/pihole/pihole/listsCache
+/volume1/docker/home-server/vw-data/icon_cache
+/volume1/docker/home-server/nginx-proxy-manager/data/logs
+
+# Live SQLite files: saved as consistent copies under /volume2/@nas-backup/staging instead
+/home/soaalex/.hermes/**/*.db
+/home/soaalex/.hermes/**/*.db-wal
+/home/soaalex/.hermes/**/*.db-shm
+/home/soaalex/.hermes/**/*.sqlite*
+/volume1/docker/home-server/vw-data/db.sqlite3*
+/volume1/docker/home-server/nginx-proxy-manager/data/database.sqlite*
+/volume1/docker/home-server/pihole/pihole/gravity*.db*
+/volume1/@docker/volumes/teslamate_teslamate-grafana-data/_data/grafana.db*
+
+# Not worth keeping: DNS query log, Frigate event index (its recordings are not backed up either),
+# Codex logs, this backup's own password
+/volume1/docker/home-server/pihole/pihole/pihole-FTL.db*
+/volume1/docker/home-server/frigate/config/*.db*
+/home/soaalex/.codex/logs_*.sqlite*
+/home/soaalex/.config/nas-backup

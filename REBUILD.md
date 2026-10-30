@@ -12,6 +12,8 @@ How to bring the whole Docker stack back after an **OS reset** or a **NAS replac
 > protect against accidental deletion, ransomware, filesystem corruption, or theft. If
 > `/volume1` is genuinely gone, this runbook is not enough — you need the `.env` files,
 > `home-server/wireguard/` and the database dumps from a backup; none of them is in git.
+> They are in the nightly restic backup on the RAID ([`backup/README.md`](backup/README.md):
+> repository `/volume2/@nas-backup/restic`, password in the password manager).
 
 ---
 
@@ -37,11 +39,15 @@ How to bring the whole Docker stack back after an **OS reset** or a **NAS replac
 
 `/volume2` is the **RAID 5 pool** (4 disks, btrfs). It holds `/home` (the user home:
 the Hermes agent in `~/.hermes`, `~/.ssh`, the user systemd units), Frigate recordings
-(`/volume2/NAS-STORAGE/frigate`) and today's on-box copies of `/volume1/docker`
-(`NAS-STORAGE/TechnicalBackups/docker`, written by a root cron job at 02:00, and
-`NAS-STORAGE/docker-backup`, written by the UGOS Sync & Backup task "docker auto backup"
-at 07:00). Neither copy includes the Docker named volumes (so no database), and both sit
-on the same NAS.
+(`/volume2/NAS-STORAGE/frigate`) and the nightly restic repository (`/volume2/@nas-backup`,
+see [`backup/README.md`](backup/README.md)): `/volume1/docker`, the named volumes, one
+`pg_dump -Fc` per database (readable copies of the last 7 nights in
+`NAS-STORAGE/TechnicalBackups/postgres/<date>/`), the VM disks, `~/.hermes` and the host
+settings, 14 daily / 8 weekly / 12 monthly versions, restore-tested every Sunday.
+The two older plain copies of `/volume1/docker` (`NAS-STORAGE/TechnicalBackups/docker`,
+root cron at 02:00, and `NAS-STORAGE/docker-backup`, UGOS task "docker auto backup" at
+07:00; no database in either) are kept only until restic has a clean week behind it.
+All of these sit on the same NAS until the off-site copy exists.
 
 The Hermes agent's configuration is also kept, encrypted, in [`hermes-vault/`](hermes-vault/README.md)
 (restore steps there; the private key is not on the NAS).
@@ -53,7 +59,7 @@ The Hermes agent's configuration is also kept, encrypted, in [`hermes-vault/`](h
 Copy off the NAS, or confirm they're in the repo:
 
 - [ ] `common/.env`, `home-server/.env`, `home-server/aiostreams/.env`, `home-server/aiometadata/.env`, `teslamate/.env`, `maison/.env`, `eurl-frais/.env` — git-ignored
-- [ ] A fresh `pg_dump -Fc` of each database in `common-postgres` (`teslamate`, `maison`, `aiostreams`, `aiometadata`) — the named volume lives on the SSD
+- [ ] A fresh `pg_dump -Fc` of each database in `common-postgres` (`teslamate`, `maison`, `aiostreams`, `aiometadata`) — the named volume lives on the SSD; `nas-backup run` writes them to `NAS-STORAGE/TechnicalBackups/postgres/<today>/` and snapshots everything else
 - [ ] `home-server/wireguard/` — git-ignored; losing it means **reconfiguring every VPN client device** (it also holds the Mac wstunnel kit, `clients/mac-wstunnel/`)
 - [ ] Router settings (§7) — recorded nowhere on the NAS
 - [ ] `docker volume ls` output, to verify nothing is missing afterwards
@@ -322,15 +328,18 @@ let the `ports:` publishing be dropped — see "Known issues".
 ### PostgreSQL restore
 
 Every database lives in `common-postgres` (named volume `common_postgres-data`, on the SSD).
-Do **not** restore from `NAS-STORAGE/TechnicalBackups/teslamate_backup.sql`: the root cron
-job that writes it still targets the retired `teslamate-database-1` container, so it has
+Nightly dumps: `/volume2/NAS-STORAGE/TechnicalBackups/postgres/<date>/<database>.dump` (+ `globals.sql`
+for the roles; older ones in the restic snapshots). Do **not** use `TechnicalBackups/teslamate_backup.sql`:
+the old root cron job that writes it targets the retired `teslamate-database-1` container and has
 produced an empty file every night since TeslaMate moved to `common-postgres`.
 
-Restore a custom-format dump (`pg_dump -Fc`) into the running server:
+Replace a database with its dump (stop its services first; steps also in `LISEZMOI.txt` next to the dumps):
 
 ```bash
-docker exec -i common-postgres sh -c 'pg_restore -U "$POSTGRES_USER" -d teslamate --clean --if-exists' < teslamate.dump
+docker cp teslamate.dump common-postgres:/tmp/
+docker exec common-postgres sh -c 'dropdb -U "$POSTGRES_USER" --if-exists teslamate && pg_restore -U "$POSTGRES_USER" -C -d postgres /tmp/teslamate.dump'
 ```
+On a fresh server, restore `globals.sql` first (`psql -U "$POSTGRES_USER" -d postgres -f globals.sql`).
 
 ---
 

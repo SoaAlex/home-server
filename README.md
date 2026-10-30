@@ -13,7 +13,8 @@ docker/
 ├── qbittorrent/         Torrent client (managed by the UGOS app, not compose)
 ├── maison/              Private house-search crawler + UI (port 8090, LAN/VPN only) — see maison/README.md
 ├── eurl-frais/          Monthly EURL expenses CLI (Orange invoices, rent receipt, summary → Discord) — see eurl-frais/README.md
-└── hermes-vault/        Encrypted configuration of the Hermes agent (age, post-quantum) — see hermes-vault/README.md
+├── hermes-vault/        Encrypted configuration of the Hermes agent (age, post-quantum) — see hermes-vault/README.md
+└── backup/              Nightly encrypted backup to the RAID (restic, Postgres dumps, restore tests) — see backup/README.md
 ```
 
 To rebuild everything after an OS reset or NAS swap, follow **[REBUILD.md](REBUILD.md)**.
@@ -99,6 +100,7 @@ Secrets are stored in `.env` files (git-ignored). Each stack has its own:
 | `maison/.env` | `DATABASE_URL`, `DISCORD_WEBHOOK_URL`, `ENRICH_TOKEN`, `IMAP_USER`, `IMAP_PASSWORD`, … |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
 | `eurl-frais/.env` | `ORANGE_USERNAME`, `ORANGE_PASSWORD`, `ORANGE_SHARE`, `GAS_MONTHLY_EUR`, `ELECTRICITY_MONTHLY_EUR`, `DISCORD_WEBHOOK_URL`, … |
+| `backup/.env` | `DISCORD_WEBHOOK_URL` (the restic password is `~/.config/nas-backup/restic.pass`, outside the repo) |
 
 Create from templates:
 ```bash
@@ -109,11 +111,12 @@ cp teslamate/.env.example teslamate/.env
 
 ## Backups
 
-- **PostgreSQL:** Automated dump to `/volume2/NAS-STORAGE/TechnicalBackups/teslamate_backup.sql`
-- **Restore:**
-  ```bash
-  docker exec -i common-postgres psql -U teslamate teslamate < /path/to/teslamate_backup.sql
-  ```
+Nightly encrypted, versioned backup to the RAID with restic (`backup/`, systemd user timers): one
+`pg_dump -Fc` per database of `common-postgres` (also kept 7 days in plain sight in
+`/volume2/NAS-STORAGE/TechnicalBackups/postgres/<date>/`), consistent copies of the SQLite databases,
+`/volume1/docker`, the Docker volumes, the VM disks, the Hermes agent and the host settings. A weekly
+job prunes, checks the repository and runs a restore test; failures and a weekly recap go to Discord.
+What, where and how to restore: [`backup/README.md`](backup/README.md).
 
 ## Hardware
 
