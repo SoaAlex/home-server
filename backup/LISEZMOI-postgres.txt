@@ -1,0 +1,29 @@
+Sauvegardes PostgreSQL du NAS (conteneur common-postgres)
+=========================================================
+
+Chaque nuit vers 4 h, un dossier AAAA-MM-JJ est créé ici avec :
+  <base>.dump     une base de données (format « custom » de pg_dump, compressé), vérifiée avec pg_restore --list
+                  (teslamate, maison, aiostreams, aiometadata, ...)
+  globals.sql     les rôles (utilisateurs Postgres) et leurs mots de passe chiffrés
+  manifest.json   version du serveur, tailles, propriétaire de chaque base
+Les 7 derniers jours restent ici. L'historique complet (14 jours, 8 semaines, 12 mois) est dans la
+sauvegarde restic : voir /volume1/docker/backup/README.md.
+Ce fichier est réécrit à chaque sauvegarde : ne pas le modifier ici.
+
+Restaurer une base dans common-postgres (exemple : teslamate)
+-------------------------------------------------------------
+1. Arrêter les services qui l'utilisent :
+     cd /volume1/docker/teslamate && docker compose stop
+2. Copier le dump dans le conteneur :
+     docker cp /volume2/NAS-STORAGE/TechnicalBackups/postgres/AAAA-MM-JJ/teslamate.dump common-postgres:/tmp/
+3. Remplacer la base par celle du dump :
+     docker exec common-postgres sh -c 'dropdb -U "$POSTGRES_USER" --if-exists teslamate && pg_restore -U "$POSTGRES_USER" -C -d postgres /tmp/teslamate.dump'
+4. Relancer les services :
+     docker compose start
+
+Sur un serveur Postgres neuf, recréer d'abord les rôles :
+     docker cp globals.sql common-postgres:/tmp/ && docker exec common-postgres sh -c 'psql -U "$POSTGRES_USER" -d postgres -f /tmp/globals.sql'
+     (les erreurs « role ... already exists » sont normales)
+
+Obtenir un fichier .sql lisible à partir d'un .dump :
+     pg_restore -f teslamate.sql teslamate.dump

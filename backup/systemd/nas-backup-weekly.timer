@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly NAS backup check and recap (Sunday 05:30)
+
+[Timer]
+OnCalendar=Sun *-*-* 05:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

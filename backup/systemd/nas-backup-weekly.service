@@ -1,0 +1,9 @@
+[Unit]
+Description=NAS backup weekly: retention, integrity check, restore test, Discord recap
+Documentation=file:///volume1/docker/backup/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /volume1/docker/backup/nas_backup.py weekly
+Nice=10
+TimeoutStartSec=12h

@@ -1,0 +1,9 @@
+[Unit]
+Description=NAS backup: Postgres dumps, SQLite copies and restic snapshot to the RAID
+Documentation=file:///volume1/docker/backup/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /volume1/docker/backup/nas_backup.py run
+Nice=10
+TimeoutStartSec=8h
