@@ -1,0 +1,13 @@
+[Unit]
+Description=NAS backup monthly: RAID data to Google Drive, off-site retention, check, restore test, recap
+Documentation=file:///volume1/docker/backup/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /volume1/docker/backup/nas_backup.py monthly
+# the upload runs in a container outside this unit: stopping the unit must stop it too
+ExecStopPost=-/usr/bin/docker rm -f nas-backup-offsite-data
+ExecStopPost=-/usr/bin/rm -f %h/.local/state/nas-backup/monthly-progress.json
+Nice=10
+# the first upload (~1.2 TB at <= 580 GB/day) takes two to three days
+TimeoutStartSec=7d
