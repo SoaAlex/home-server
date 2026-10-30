@@ -70,6 +70,8 @@ SOURCES = [
     (str(DUMPS), str(DUMPS)),
     (str(STAGING), str(STAGING)),
     (str(HOME), str(HOME)),
+    # Obsidian vault: ~/.hermes/memories is a symlink into it, which restic does not follow
+    ("/volume2/NAS-STORAGE/CLOUD_NAS/99-OBSIDIAN_VAULT", "/volume2/NAS-STORAGE/CLOUD_NAS/99-OBSIDIAN_VAULT"),
     ("/etc", "/hostfs/etc"),
     ("/var/spool/cron", "/hostfs/var/spool/cron"),
 ]

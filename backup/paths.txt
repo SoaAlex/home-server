@@ -14,6 +14,8 @@
 /volume2/@nas-backup/staging
 # Hermes agent (config, memories, skills, sessions; code and toolchains are reinstalled) and user config
 /home/soaalex/.hermes
+# Obsidian vault (shared memory); ~/.hermes/memories is only a symlink to its Hermes/ folder
+/volume2/NAS-STORAGE/CLOUD_NAS/99-OBSIDIAN_VAULT
 /home/soaalex/.ssh
 /home/soaalex/.config
 /home/soaalex/.local/bin
