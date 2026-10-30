@@ -666,7 +666,10 @@ def weekly() -> int:
 
 def weekly_message(rep: dict) -> str:
     icon = {"ok": "✅", "warning": "⚠️", "failed": "❌"}[rep["status"]]
-    nights = history("nightly", days=7)
+    by_date = {}  # a night counts once: its last run (a manual re-run replaces a failed one)
+    for r in history("nightly", days=7):
+        by_date[r["date"]] = r
+    nights = [by_date[d] for d in sorted(by_date)]
     ok = sum(r["status"] == "ok" for r in nights)
     warn = sum(r["status"] == "warning" for r in nights)
     fail = sum(r["status"] == "failed" for r in nights)
@@ -734,12 +737,14 @@ def main() -> int:
     def only_restore():
         rep = {"kind": "restore-test", "date": dt.date.today().isoformat(), "started": now_iso(),
                "warnings": [], "failed": {}, "restore": {}}
+        t0 = time.time()
         ensure_image()
         try:
             restore_test(rep)
         except Exception as e:
             rep["failed"]["restore"] = f"{type(e).__name__}: {e}"[:600]
         rep["status"] = "failed" if rep["failed"] else "warning" if rep["warnings"] else "ok"
+        rep["duration_s"] = round(time.time() - t0)
         record(rep)
         print(json.dumps({k: rep[k] for k in ("status", "restore", "warnings", "failed")}, indent=2, ensure_ascii=False))
         return 1 if rep["failed"] else 0
