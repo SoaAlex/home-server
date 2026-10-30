@@ -1,0 +1,29 @@
+# restic exclude patterns for the monthly RAID backup to Google Drive (a pattern without "/" matches
+# that name anywhere; "[#]" because a line starting with "#" is a comment).
+
+# Recycle bins, sync metadata, temporary and OS clutter
+[#]recycle
+.sync
+*.ug-tmp
+.DS_Store
+Thumbs.db
+node_modules
+__pycache__
+
+# Already on Google Drive every night (copies of the nightly snapshots) or only on-box copies
+/volume2/@home/soaalex/.hermes
+/volume2/NAS-STORAGE/TechnicalBackups
+/volume2/NAS-STORAGE/docker-backup
+
+# Not worth an off-site copy: camera recordings (rolling), downloadable games, caches and toolchains
+/volume2/NAS-STORAGE/frigate
+/volume2/NAS-STORAGE/CRACKS
+/volume2/@home/linuxbrew
+/volume2/@home/soaalex/.cache
+/volume2/@home/soaalex/.npm
+/volume2/@home/soaalex/.vscode-server
+/volume2/@home/soaalex/google-cloud-sdk
+/volume2/@home/soaalex/.claude/remote
+/volume2/@home/soaalex/.codex/packages
+/volume2/@home/soaalex/.codex/.tmp
+/volume2/@home/soaalex/.gemini/bin

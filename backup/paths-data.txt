@@ -1,0 +1,12 @@
+# RAID data saved to Google Drive once a month (nas_backup.py monthly), read-only, same paths as on the host
+# (/home = /volume2/@home). A missing path is skipped with a warning. The service state (/volume1, ~/.hermes,
+# database dumps, host settings) is not listed here: it reaches Google Drive every night as copies of the
+# nightly snapshots.
+
+# Every personal folder (\\NAS-SOAALEX\personal_folder), including "Photos archivées"
+/volume2/@home
+# Photo libraries
+/volume2/Photos
+/volume2/Photos Partages
+# Shared storage (documents, studies, CLOUD_NAS...); exclusions in excludes-data.txt
+/volume2/NAS-STORAGE

@@ -14,7 +14,7 @@ docker/
 ├── maison/              Private house-search crawler + UI (port 8090, LAN/VPN only) — see maison/README.md
 ├── eurl-frais/          Monthly EURL expenses CLI (Orange invoices, rent receipt, summary → Discord) — see eurl-frais/README.md
 ├── hermes-vault/        Encrypted configuration of the Hermes agent (age, post-quantum) — see hermes-vault/README.md
-└── backup/              Nightly encrypted backup to the RAID (restic, Postgres dumps, restore tests) — see backup/README.md
+└── backup/              Encrypted backups to the RAID nightly and to Google Drive (restic, Postgres dumps, restore tests) — see backup/README.md
 ```
 
 To rebuild everything after an OS reset or NAS swap, follow **[REBUILD.md](REBUILD.md)**.
@@ -116,7 +116,9 @@ Nightly encrypted, versioned backup to the RAID with restic (`backup/`, systemd 
 `/volume2/NAS-STORAGE/TechnicalBackups/postgres/<date>/`), consistent copies of the SQLite databases,
 `/volume1/docker`, the Docker volumes, the VM disks, the Hermes agent and the host settings. A weekly
 job prunes, checks the repository and runs a restore test; failures and a weekly recap go to Discord.
-What, where and how to restore: [`backup/README.md`](backup/README.md).
+Off-site: each nightly snapshot is copied the same night to a second restic repository on Google Drive
+(rclone), and the RAID data (photos, documents, personal folders) goes there once a month, with its own
+check and restore test. What, where and how to restore: [`backup/README.md`](backup/README.md).
 
 ## Hardware
 

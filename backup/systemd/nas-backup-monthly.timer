@@ -1,0 +1,9 @@
+[Unit]
+Description=Monthly NAS backup to Google Drive (1st of the month, 01:00)
+
+[Timer]
+OnCalendar=*-*-01 01:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

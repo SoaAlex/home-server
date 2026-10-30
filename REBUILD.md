@@ -13,7 +13,9 @@ How to bring the whole Docker stack back after an **OS reset** or a **NAS replac
 > `/volume1` is genuinely gone, this runbook is not enough — you need the `.env` files,
 > `home-server/wireguard/` and the database dumps from a backup; none of them is in git.
 > They are in the nightly restic backup on the RAID ([`backup/README.md`](backup/README.md):
-> repository `/volume2/@nas-backup/restic`, password in the password manager).
+> repository `/volume2/@nas-backup/restic`, password in the password manager), copied every night
+> to Google Drive (`rclone:gdrive:nas-backup/restic`, same password), which also receives the RAID
+> data (photos, documents, personal folders) once a month.
 
 ---
 
@@ -47,7 +49,7 @@ settings, 14 daily / 8 weekly / 12 monthly versions, restore-tested every Sunday
 The two older plain copies of `/volume1/docker` (`NAS-STORAGE/TechnicalBackups/docker`,
 root cron at 02:00, and `NAS-STORAGE/docker-backup`, UGOS task "docker auto backup" at
 07:00; no database in either) are kept only until restic has a clean week behind it.
-All of these sit on the same NAS until the off-site copy exists.
+Off-site: every nightly snapshot is copied to Google Drive, and the RAID data goes there monthly.
 
 The Hermes agent's configuration is also kept, encrypted, in [`hermes-vault/`](hermes-vault/README.md)
 (restore steps there; the private key is not on the NAS).
