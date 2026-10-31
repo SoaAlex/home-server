@@ -62,7 +62,12 @@ chunker parameters (created with `nas-backup offsite-init`).
 - **Consistent SQLite copies:** `/volume2/@nas-backup/staging` (inside every snapshot).
 - **Off-site:** Google Drive, see above. The OAuth client ID and secret are in `~/.config/rclone/rclone.conf`;
   keep a copy in the password manager too (a new client limited to `drive.file` cannot see these files).
-- **Logs:** `journalctl --user -u nas-backup -u nas-backup-weekly -u nas-backup-monthly`; history: `nas-backup status`.
+- **Logs:** one file per job and per month in `~/.local/state/nas-backup/logs/` (`2026-11-nightly.log`,
+  `-weekly`, `-monthly`, `-offsite`, `-restore-test`): start and end of every run, each step with its duration,
+  the full report, the Discord alerts sent, a crash trace, a stop by SIGTERM, and a line when the previous run
+  was killed (marker `<lock>.running` left behind). About 3 kB per night (~150 kB a month); files older than 12
+  months are deleted. The systemd journal of UGOS (50 MB for the whole system) keeps only minutes. Last runs at a
+  glance: `nas-backup status`.
 - **Alerts:** Discord (`DISCORD_WEBHOOK_URL` in `backup/.env`): one message for any failure or warning,
   a recap every Sunday and one after each monthly Google Drive run. No recap on a Sunday morning means the
   job itself is not running.

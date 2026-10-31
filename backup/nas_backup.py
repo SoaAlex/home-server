@@ -19,7 +19,7 @@ root-owned data, the repository itself) happens in throw-away containers built f
   alert-test     send a test message to the Discord webhook
   restic ARGS    any restic command on the local repository (e.g. snapshots, ls latest /volume1/docker, stats)
   restic-offsite ARGS    the same on the Google Drive repository
-What is saved, where, and how to restore: README.md.
+What is saved, where, and how to restore: README.md. Detailed log of every job: ~/.local/state/nas-backup/logs/.
 """
 from __future__ import annotations
 
@@ -33,11 +33,13 @@ import random
 import re
 import secrets
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
 import threading
 import time
+import traceback
 import urllib.request
 from pathlib import Path
 
@@ -53,6 +55,13 @@ STATE = HOME / ".local/state/nas-backup"
 # which lives on the SSD (/volume1/@docker) and would take a write of every byte uploaded
 RESTIC_TMP = BASE / "tmp"
 HISTORY = STATE / "history.jsonl"
+# Detailed log of every job run, one file per job and per month, on the RAID: the systemd journal of this NAS
+# (50 MB shared by the whole system) keeps only minutes. A few kB per run; files older than LOG_KEEP_MONTHS go.
+LOGS = STATE / "logs"
+LOG_KEEP_MONTHS = 12
+JOB_LOGS = {"run": "nightly", "weekly": "weekly", "monthly": "monthly", "restore-test": "restore-test",
+            "offsite-init": "offsite", "offsite-copy": "offsite", "offsite-restore-test": "offsite"}
+CURRENT = {"command": "?", "log": None, "log_path": None}  # this process: its command, open log file, log path
 IMAGE = "nas-backup:latest"
 PG_CONTAINER = "common-postgres"
 PG_TEST = "nas-backup-pgtest"
@@ -129,8 +138,40 @@ class StepError(Exception):
 
 # ---------------------------------------------------------------- helpers
 
+_LOG_LOCK = threading.RLock()  # re-entrant: the SIGTERM handler may log while the main thread is logging
+
+
 def log(msg: str) -> None:
-    print(f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} {msg}", flush=True)
+    line = f"{dt.datetime.now():%Y-%m-%d %H:%M:%S} {msg}"
+    print(line, flush=True)
+    if CURRENT["log"] is not None:
+        with _LOG_LOCK:  # MemoryGuard logs from its own thread
+            CURRENT["log"].write(line + "\n")
+            CURRENT["log"].flush()
+
+
+def open_log(job: str) -> None:
+    """Append this run's log to LOGS/<YYYY-MM>-<job>.log; delete the files older than LOG_KEEP_MONTHS."""
+    LOGS.mkdir(parents=True, exist_ok=True)
+    today = dt.date.today()
+    k = today.year * 12 + today.month - 1 - LOG_KEEP_MONTHS
+    oldest = f"{k // 12:04d}-{k % 12 + 1:02d}"
+    for f in LOGS.glob("*.log"):
+        if f.name[:7] < oldest:
+            f.unlink(missing_ok=True)
+    CURRENT["log_path"] = LOGS / f"{today:%Y-%m}-{job}.log"
+    CURRENT["log"] = open(CURRENT["log_path"], "a", encoding="utf-8")
+
+
+def log_hint() -> str:
+    """Where the details are, for the Discord messages."""
+    path = CURRENT["log_path"]
+    return f"Détails sur le NAS : `{str(path).replace(str(HOME), '~')}`" if path else ""
+
+
+def on_sigterm(signum, frame):
+    log("stopped by SIGTERM (systemctl stop, or the NAS shutting down)")
+    raise SystemExit(128 + signum)
 
 
 def now_iso() -> str:
@@ -191,10 +232,12 @@ def discord(text: str) -> bool:
                                                           "User-Agent": "nas-backup/1.0"})
     try:
         with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=30) as r:
-            return 200 <= r.status < 300
+            ok = 200 <= r.status < 300
     except Exception as e:  # never log the URL: it is a secret
         log(f"alert not sent: {type(e).__name__}")
         return False
+    log(f"alert sent to Discord: {(text.splitlines() or [''])[0]}" if ok else "alert refused by Discord")
+    return ok
 
 
 def ensure_image() -> None:
@@ -289,8 +332,10 @@ def check_sqlite(path: Path) -> int:
 
 def record(rep: dict) -> None:
     STATE.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(rep, ensure_ascii=False)
     with open(HISTORY, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(rep, ensure_ascii=False) + "\n")
+        fh.write(line + "\n")
+    log("report: " + line[:8000])
 
 
 def history(kind=None, days=None) -> list:
@@ -308,7 +353,9 @@ def history(kind=None, days=None) -> list:
 def locked(fn, lock="lock", wait_h=3):
     """Run fn under a lock file: `lock` for the local jobs, `lock-offsite` for everything that uploads to
     Google Drive (never two uploads at once). The monthly upload holds lock-offsite for days; the nights keep
-    running beside it (restic lets backups share a repository and makes prune wait: --retry-lock)."""
+    running beside it (restic lets backups share a repository and makes prune wait: --retry-lock).
+    A marker file names the run holding the lock: one left behind means that run was killed (earlyoom, power
+    cut...), which the next run writes in the log."""
     STATE.mkdir(parents=True, exist_ok=True)
     with open(STATE / lock, "w") as fh:
         deadline = time.time() + wait_h * 3600
@@ -320,7 +367,15 @@ def locked(fn, lock="lock", wait_h=3):
                 if time.time() > deadline:
                     raise StepError(f"another backup run still holds {lock} after {wait_h} h")
                 time.sleep(30)
-        return fn()
+        marker = STATE / f"{lock}.running"
+        if (prev := read_json(marker)):
+            log(f"the previous run holding {lock} ({prev.get('command')}, pid {prev.get('pid')}, started "
+                f"{prev.get('started')}) never finished: killed (out of memory?) or the NAS restarted")
+        write_json(marker, {"command": CURRENT["command"], "pid": os.getpid(), "started": now_iso()})
+        try:
+            return fn()
+        finally:
+            marker.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------- nightly steps
@@ -538,8 +593,10 @@ def nightly() -> int:
              ("offsite", lambda: nightly_offsite(rep)))
     for name, fn in steps:  # keep going after a failed step: back up whatever can be
         log(f"step {name}")
+        ts = time.time()
         try:
             fn()
+            log(f"step {name}: ok ({time.time() - ts:.0f} s)")
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"[:600]
             log(f"step {name} FAILED: {msg}")
@@ -555,7 +612,7 @@ def nightly() -> int:
         head = ("❌ **Sauvegarde NAS du {d} : échec**" if rep["status"] == "failed"
                 else "⚠️ **Sauvegarde NAS du {d} : terminée avec des avertissements**").format(d=fr_date(day))
         lines = [head] + [f"• étape {k} : {v}" for k, v in rep["failed"].items()] + [f"• {w}" for w in rep["warnings"][:8]]
-        lines.append("Détails sur le NAS : `journalctl --user -u nas-backup -n 100`")
+        lines.append(log_hint() or "Détails sur le NAS : `journalctl --user -u nas-backup -n 100`")
         discord("\n".join(lines))
     log(f"done: {rep['status']} in {rep['duration_s']} s")
     return 1 if rep["status"] == "failed" else 0
@@ -730,8 +787,10 @@ def weekly() -> int:
 
     for name, fn in (("forget", forget), ("check", check), ("restore", lambda: restore_test(rep)), ("stats", stats)):
         log(f"step {name}")
+        ts = time.time()
         try:
             fn()
+            log(f"step {name}: ok ({time.time() - ts:.0f} s)")
         except Exception as e:
             rep["failed"][name] = f"{type(e).__name__}: {e}"[:600]
             log(f"step {name} FAILED: {rep['failed'][name]}")
@@ -783,6 +842,8 @@ def weekly_message(rep: dict) -> str:
                      "Vaultwarden/WireGuard identiques au réel")
     lines += [f"• étape {k} en échec : {v}" for k, v in rep["failed"].items()]
     lines += [f"• {w}" for w in rep["warnings"][:6]]
+    if rep["status"] != "ok" and (hint := log_hint()):
+        lines.append(hint)
     return "\n".join(lines)
 
 
@@ -1288,8 +1349,10 @@ def monthly() -> int:
              ("restore", lambda: offsite_restore_test(rep)), ("stats", lambda: offsite_stats(rep)))
     for name, fn in steps:
         log(f"step {name}")
+        ts = time.time()
         try:
             fn()
+            log(f"step {name}: ok ({time.time() - ts:.0f} s)")
         except AuthError as e:
             rep["failed"][name] = str(e)
             log(f"step {name} FAILED: Google refused the token, stopping here")
@@ -1338,6 +1401,8 @@ def monthly_message(rep: dict) -> str:
                      f"identiques au réel" + (f", {x['changed_since']} modifiés depuis" if x["changed_since"] else ""))
     lines += [f"• étape {k} en échec : {v}" for k, v in rep["failed"].items()]
     lines += [f"• {w}" for w in rep["warnings"][:6]]
+    if rep["status"] != "ok" and (hint := log_hint()):
+        lines.append(hint)
     return "\n".join(lines)
 
 
@@ -1400,6 +1465,7 @@ def status() -> int:
         print(cl)
     if (pl := progress_line()):
         print("running: " + pl)
+    print(f"detailed logs: {str(LOGS).replace(str(HOME), '~')}/<YYYY-MM>-<job>.log")
     return 0
 
 
@@ -1409,6 +1475,25 @@ def main() -> int:
                                         "offsite-restore-test", "status", "alert-test", "restic", "restic-offsite"])
     ap.add_argument("args", nargs=argparse.REMAINDER)
     a = ap.parse_args()
+    CURRENT["command"] = a.command
+    if a.command not in JOB_LOGS:  # status, alert-test, restic ...: interactive, no log file
+        return command(a)
+    open_log(JOB_LOGS[a.command])
+    signal.signal(signal.SIGTERM, on_sigterm)
+    log(f"start {a.command} (pid {os.getpid()})")
+    try:
+        rc = command(a)
+    except KeyboardInterrupt:
+        log("interrupted (Ctrl-C)")
+        raise
+    except Exception:
+        log("CRASH\n" + traceback.format_exc())
+        raise
+    log(f"end {a.command}: exit code {rc}")
+    return rc
+
+
+def command(a) -> int:
     if a.command == "status":
         return status()
     if a.command == "alert-test":
@@ -1428,11 +1513,11 @@ def main() -> int:
         ensure_image()
         if subprocess.run([str(c) for c in restic_cmd(["cat", "config"], offsite=True)],
                           capture_output=True).returncode == 0:
-            print("Google Drive repository already initialised")
+            log("Google Drive repository already initialised")
             return 0
         p = run(restic_cmd(["init", "--copy-chunker-params"], offsite=True), capture_output=True, text=True,
                 timeout=900)
-        print("\n".join(l for l in p.stdout.splitlines() if l.startswith("created restic repository")))
+        log("\n".join(l for l in p.stdout.splitlines() if l.startswith("created restic repository")))
         return 0
     if a.command in ("offsite-copy", "offsite-restore-test"):
         def one_shot():
