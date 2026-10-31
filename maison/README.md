@@ -36,6 +36,21 @@ docker compose run --rm -v "$PWD":/app web pytest -q          # tests
 docker compose run --rm collector python -m app.collector --once   # un cycle immédiat
 ```
 
+## Santé quotidienne (`ops/healthcheck.py`)
+Contrôle en lecture seule lancé chaque matin (7 h 30) par un cron Hermes sans agent, message sur Discord :
+une ligne ✅ si tout va bien, sinon la liste des problèmes (🚨) et des points d'attention (⚠️).
+Vérifie conteneurs + DNS épinglé, API, relais BAN/ADEME/cadastre (via la commande `maison` des agents),
+journaux du collecteur (sources/e-mails en échec, cycle en retard), fraîcheur de chaque source en base,
+5xx du relais et POST d'enrichissement refusés, crons Hermes d'enrichissement (pause, tirs en échec,
+réponses vides), et les analyses bloquées : fiche encore en attente depuis le contrôle précédent, demande
+« Investiguer » de plus de 12 h, enrichissement à l'arrêt, fiches `failed` ou sans résumé.
+```bash
+python3 -I ops/healthcheck.py --no-state          # essai à blanc (n'avance pas l'état)
+python3 -I ops/healthcheck.py --no-state --json   # faits collectés + verdict
+python3 -m unittest discover -s ops               # tests (stdlib, sans Docker)
+```
+État entre deux contrôles et historique : `~/.local/state/maison-health/`.
+
 ## Score (/100)
 Ville (25 → 11 selon rang, 5 si « autre ») · prix (≤400k 15, ≤450k 12, ≤500k 5) · type (indiv. 12,
 semi 7) · terrain (≥400 m² 12, ≥250 8, ≥150 4 ; −3 jardin en longueur) · DPE (A/B 8 … F/G −5) ·
