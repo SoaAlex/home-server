@@ -24,6 +24,15 @@ def _cls(v):
     return v if v and v not in ("NS", "VI") and len(v) == 1 else None
 
 
+def _scalar(v):
+    """Les programmes neufs publient des fourchettes ([84.32, 87.51]) : on garde la valeur la plus
+    basse. Un tableau dans une colonne numérique fait échouer l'INSERT, donc toute la source."""
+    if isinstance(v, (list, tuple)):
+        nums = [x for x in v if isinstance(x, (int, float)) and not isinstance(x, bool)]
+        return min(nums) if nums else None
+    return v
+
+
 def parse(payload: dict) -> list[dict]:
     out = []
     for ad in payload.get("realEstateAds", []):
@@ -37,8 +46,8 @@ def parse(payload: dict) -> list[dict]:
             title=ad.get("title") or f"Maison {ad.get('roomsQuantity') or ''} pièces {ad.get('city')}",
             description=ad.get("description"),
             price=int(ad["price"]) if isinstance(ad.get("price"), (int, float)) else None,
-            surface_m2=ad.get("surfaceArea"), land_m2=ad.get("landSurfaceArea"),
-            rooms=ad.get("roomsQuantity"), bedrooms=ad.get("bedroomsQuantity"),
+            surface_m2=_scalar(ad.get("surfaceArea")), land_m2=_scalar(ad.get("landSurfaceArea")),
+            rooms=_scalar(ad.get("roomsQuantity")), bedrooms=_scalar(ad.get("bedroomsQuantity")),
             property_type=tp.detect_type(text), city=ad.get("city"), postal_code=ad.get("postalCode"),
             dpe=_cls(ad.get("energyClassification")), ges=_cls(ad.get("greenhouseGazClassification")),
             dpe_value=int(ad["energyValue"]) if isinstance(ad.get("energyValue"), (int, float)) else None,
