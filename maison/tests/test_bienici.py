@@ -41,3 +41,17 @@ def test_new_build_range_is_ingested(dburl):
         lid, inserted = upsert(conn, item)
         row = conn.execute("SELECT surface_m2 FROM listing WHERE id=%s", (lid,)).fetchone()
     assert inserted and float(row["surface_m2"]) == 84.32
+
+
+def test_new_property_flag_is_kept_in_raw():
+    # Sert à la déduplication : deux lots d'un programme neuf partagent les mêmes rendus.
+    assert parse_one(newProperty=True)["raw"]["newProperty"] is True
+    assert parse_one(newProperty=False)["raw"]["newProperty"] is False
+    assert parse_one()["raw"]["newProperty"] is None
+
+
+def test_fixture_listings_keep_new_property():
+    import json
+    from pathlib import Path
+    data = json.loads((Path(__file__).parent / "fixtures" / "bienici.json").read_text())
+    assert all(it["raw"]["newProperty"] is False for it in bienici.parse(data))

@@ -7,7 +7,7 @@ import traceback
 from datetime import datetime
 import httpx
 from psycopg.types.json import Jsonb
-from app import db, settings, geo, photos, alerts
+from app import db, settings, geo, photos, alerts, dedupe
 from app.ingest import upsert, mark_gone
 from app.scoring import score_listing
 from app.sources import bienici, notaires, maes, netty, agences, pap, email_alerts
@@ -23,7 +23,10 @@ def alerts_enabled() -> bool:
 
 
 def rescore(conn, client, crit, ids=None):
-    q = "SELECT * FROM listing WHERE status='active'" + (" AND id = ANY(%s)" if ids else "")
+    # Annonces principales seulement (les secondaires d'un bien fusionné n'ont ni score ni alerte) ;
+    # un bien reste actif tant qu'une de ses offres l'est (cluster.active).
+    q = ("SELECT * FROM listing WHERE merged_into IS NULL "
+         "AND (status='active' OR coalesce((cluster->>'active')::boolean, false))" + (" AND id = ANY(%s)" if ids else ""))
     sent = 0
     for row in conn.execute(q, (list(ids),) if ids else ()).fetchall():
         s, d, why = score_listing(row, crit)
@@ -56,11 +59,21 @@ def postprocess(conn, client, crit, lid):
     """Photos, géocodage, adresse via DPE ADEME, trajets. Idempotent."""
     row = conn.execute("SELECT * FROM listing WHERE id=%s", (lid,)).fetchone()
     _, _, why = score_listing(row, crit)
-    if why:
+    if why and why not in PENDING_OK:
         return
     upd = {}
     if not row["photos"] and row["photo_urls"]:
-        upd["photos"] = Jsonb(photos.download(client, lid, row["photo_urls"], settings.DATA_DIR / "photos", limit=10))
+        base, hashes = settings.DATA_DIR / "photos", {}
+        paths = photos.download(client, lid, row["photo_urls"], base, limit=10, hashes=hashes)
+        upd["photos"] = Jsonb(paths)
+        for idx, h in hashes.items():           # empreintes calculées en mémoire au téléchargement
+            f = base / f"{lid}/{idx:02d}.jpg"
+            st = f.stat()
+            dedupe.store_hash(conn, lid, idx, f"{lid}/{idx:02d}.jpg", h, st.st_size, st.st_mtime)
+    if why:     # « à compléter » (carte e-mail sans commune) : seulement la vignette, pour la déduplication
+        if upd:
+            conn.execute("UPDATE listing SET photos=%s WHERE id=%s", (upd["photos"], lid))
+        return
     insee = row["insee"]
     if (row["address"] and row["city"] and row["geo_precision"] != "exact"
             and (row["lat"] is None or row["geo_precision"] in (None, "city"))):
@@ -138,6 +151,18 @@ def run_once():
             except Exception:
                 conn.rollback()
                 log.warning("postprocess %s: %s", lid, traceback.format_exc(limit=2))
+        try:        # doublons : avant le score et les alertes, pour qu'une copie ne soit ni alertée ni enrichie
+            st = dedupe.process(conn, list(dict.fromkeys(touched)))
+            conn.commit()
+            if "skipped" in st:
+                log.warning("doublons: étape ignorée (%s)", st["skipped"])
+            else:
+                log.info("doublons: %d annonces comparées, %d fusions, %d suggestions, %d photos génériques, "
+                         "%d empreintes en %.2fs", st["compared"], st["merged"], st["suggested"], st["generic"],
+                         st["hashed"], st["elapsed_s"])
+        except Exception:
+            conn.rollback()
+            log.error("doublons en échec\n%s", traceback.format_exc())
         sent = rescore(conn, client, crit)
         conn.commit()
         log.info("alertes envoyées: %d", sent)

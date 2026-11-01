@@ -81,6 +81,7 @@ main.maponly #list { display: none; }
 .tags { position: absolute; top: 10px; right: 10px; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: 70%; }
 .tag { background: #000000a6; color: #fff; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; backdrop-filter: blur(4px); }
 .tag.drop { background: var(--good); } .tag.new { background: #3b82f6; } .tag.bad { background: var(--bad); }
+.tag.src { background: #6d5bd0; } .tag.dup { background: var(--mid); }
 .fav { position: absolute; bottom: 10px; right: 10px; display: flex; gap: 6px; }
 .fav button { width: 34px; height: 34px; border-radius: 50%; border: 0; background: #ffffffe6; color: #333; cursor: pointer; font-size: 15px; box-shadow: var(--shadow); }
 .fav button.on { background: var(--accent); color: #fff; }
@@ -149,6 +150,27 @@ main.maponly #list { display: none; }
 .addr-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .btn.sm { padding: 5px 10px; font-size: 12.5px; font-weight: 600; }
 .small { font-size: 12px; margin-top: 6px; }
+
+/* ---------- doublons : liens multi-sources, sources fusionnées, doublon possible ---------- */
+.offers { position: relative; }
+.offers summary { list-style: none; cursor: pointer; }
+.offers summary::-webkit-details-marker { display: none; }
+.offers .menu { position: absolute; right: 0; top: calc(100% + 6px); min-width: 300px; background: var(--panel); border: 1px solid var(--border);
+                border-radius: 12px; box-shadow: var(--shadow); padding: 6px; z-index: 600; display: flex; flex-direction: column; }
+.offers .menu a { display: flex; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 8px; color: var(--text); text-decoration: none; }
+.offers .menu a:hover { background: var(--panel-2); }
+.offers .menu a.gone, .src-row.gone { opacity: .6; }
+.offers .op { white-space: nowrap; font-weight: 600; }
+.src-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
+.src-row:last-child { border: 0; }
+.src-row a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.dupbox { border-color: #e29a1b88; }
+.dup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 8px; }
+.dup-pane { display: flex; flex-direction: column; gap: 3px; font-size: 13px; min-width: 0; }
+.dup-pics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 4px; }
+.dup-pics img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; }
+.dup-pics .nophoto { grid-column: 1 / -1; display: grid; place-items: center; height: 70px; color: var(--muted); font-size: 28px; background: var(--panel-2); border-radius: 6px; }
+@media (max-width: 600px) { .src-row { grid-template-columns: minmax(0, 1fr) auto; } .dup-grid { grid-template-columns: 1fr; } }
 
 /* ---------- carte ---------- */
 .leaflet-popup-content { margin: 10px; }

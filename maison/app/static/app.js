@@ -12,7 +12,15 @@ const WORKS = { none: "aucun", light: "rafraîchissement", heavy: "travaux impor
 const SCORE_MAX = { ville: 25, prix: 15, type: 12, jardin: 12, dpe: 8, travaux: 8, baignoire: 3, chambres: 7, trajet: 8, style: 4 };
 
 const fmt = (n) => (n == null || n === "" || isNaN(n) ? "?" : Math.round(Number(n)).toLocaleString("fr-FR"));
-const eff = (l, k) => (l.enrichment && l.enrichment[k] != null ? l.enrichment[k] : l[k]);
+// Valeur affichée : prix retenu d'un bien multi-sources (offre active la moins chère), sinon enrichissement de
+// l'agent puis colonnes (l'API a déjà complété les colonnes vides avec les autres sources du bien).
+const eff = (l, k) => (k === "price" && l.cluster && l.cluster.price ? l.cluster.price.value
+  : l.enrichment && l.enrichment[k] != null ? l.enrichment[k] : l[k]);
+const SOURCES = { bienici: "Bien'ici", seloger: "SeLoger", leboncoin: "LeBonCoin", pap: "PAP", netty: "Netty",
+                  maes: "Maes", notaires: "Notaires", agences: "Agence" };
+const srcLabel = (s) => SOURCES[s] || s;
+const OFFER_STATUS = { active: "", gone: "retirée", stale: "non confirmée" };
+const offers = (l) => (l.cluster && l.cluster.offers) || [];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const scoreCol = (s) => (s >= 75 ? "var(--good)" : s >= 55 ? "var(--mid)" : "var(--low)");
 const scoreHex = (s) => (s >= 75 ? "#1f9d6b" : s >= 55 ? "#e29a1b" : "#8a94a3");
@@ -31,7 +39,8 @@ function cityKey(city, cp) {   // même logique que textparse.city_key côté Py
   return k;
 }
 const lKey = (l) => cityKey(eff(l, "city"), l.postal_code);
-const photos = (l) => (l.photos && l.photos.length ? l.photos.map((p) => "/photos/" + p) : l.photo_urls || []);
+const photos = (l) => (l.cluster && l.cluster.photos && l.cluster.photos.length ? l.cluster.photos
+  : l.photos && l.photos.length ? l.photos.map((p) => "/photos/" + p) : l.photo_urls || []);
 const dpePill = (d) => `<span class="dpe-pill" style="background:${DPE_COL[d] || "#8a94a3"}">${d || "?"}</span>`;
 function trips(l) {
   const c = l.commute || {};
@@ -72,7 +81,7 @@ function filtered() {
   const q = norm($("#f-q").value);
   const maxPrice = (+$("#f-price").value || 0) * 1000 || Infinity;
   const minScore = +$("#f-score").value, minLand = +$("#f-land").value || 0;
-  const hideDisliked = $("#f-hide-disliked").checked, showDups = $("#f-dups").checked;
+  const hideDisliked = $("#f-hide-disliked").checked;
   const ch = state.chips;
   let out = state.all.filter((l) => {
     if ((l.score || 0) < minScore && !l.excluded_reason) return false;
@@ -89,6 +98,7 @@ function filtered() {
     if (ch.has("fav") && l.reaction !== "like") return false;
     if (ch.has("visit") && l.user_status !== "to_visit") return false;
     if (ch.has("new") && !isNew(l)) return false;
+    if (ch.has("dups") && !l.dup_pending) return false;
     if (hideDisliked && l.reaction === "dislike") return false;
     if (q && !norm([eff(l, "title"), eff(l, "city"), l.address, l.agency, l.source].join(" ")).includes(q)) return false;
     return true;
@@ -99,14 +109,7 @@ function filtered() {
     new: (l) => -new Date(l.first_seen), commute: (l) => (l.commute && l.commute.total_min) || 999,
   }[$("#f-sort").value];
   out.sort((a, b) => key(a) - key(b));
-  const groups = {};
-  for (const l of state.all) if (l.fingerprint) (groups[l.fingerprint] ||= []).push(l);
-  if (!showDups) {
-    const seen = new Set();
-    out = out.filter((l) => !l.fingerprint || (!seen.has(l.fingerprint) && seen.add(l.fingerprint)));
-  }
-  out.forEach((l) => (l._others = l.fingerprint ? groups[l.fingerprint].filter((o) => o.id !== l.id) : []));
-  return out;
+  return out;   // les doublons sont fusionnés côté serveur : une annonce = un bien
 }
 
 /* ---------- liste ---------- */
@@ -117,7 +120,9 @@ function card(l) {
   const works = eff(l, "works"), e = l.enrichment || {};
   const tags = [
     isNew(l) ? `<span class="tag new">Nouveau</span>` : "",
-    l.price_history && l.price_history.length ? `<span class="tag drop">↘ Baisse</span>` : "",
+    (l.cluster ? l.cluster.price_drop : l.price_history && l.price_history.length) ? `<span class="tag drop">↘ Baisse</span>` : "",
+    offers(l).length > 1 ? `<span class="tag src" title="${esc(offers(l).map((o) => srcLabel(o.source)).join(", "))}">${offers(l).length} sources</span>` : "",
+    l.dup_pending ? `<span class="tag dup" title="Doublon possible à valider">Doublon ?</span>` : "",
     l.excluded_reason ? `<span class="tag bad">${esc(l.excluded_reason)}</span>` : "",
     l.enrichment_status === "done" ? `<span class="tag" title="Analysée par l'agent">✦ analysée</span>` : "",
   ].join("");
@@ -142,7 +147,7 @@ function card(l) {
         ${works === "none" ? `<span class="b yes">✨ sans travaux</span>` : works === "heavy" ? `<span class="b no">🔨 travaux</span>` : works === "light" ? `<span class="b mid">🖌️ à rafraîchir</span>` : ""}
         ${e.style === "cubic" ? `<span class="b mid">🧊 cubique</span>` : ""}
         ${e.garden_shape === "long" ? `<span class="b mid">↔️ jardin en longueur</span>` : ""}</div>
-      <div class="foot"><span>🚗 ${trips(l)}</span><span>${esc(l.source)}${l._others.length ? " +" + l._others.length : ""}</span></div>
+      <div class="foot"><span>🚗 ${trips(l)}</span><span>${esc(l.cluster ? l.cluster.sources.map(srcLabel).join(" · ") : srcLabel(l.source))}</span></div>
     </div></article>`;
 }
 
@@ -183,22 +188,70 @@ function highlight(id, on) {
 }
 
 /* ---------- fiche ---------- */
+function offerLinks(l) {   // un lien par source ; menu déroulant si le bien est publié plusieurs fois
+  const os = offers(l);
+  if (os.length < 2) return `<a class="btn" href="${esc(l.url)}" target="_blank" rel="noopener">Annonce ↗</a>`;
+  return `<details class="offers"><summary class="btn">Annonces (${os.length}) ↗</summary><div class="menu">${os.map((o) =>
+    `<a href="${esc(o.url)}" target="_blank" rel="noopener" class="${esc(o.status)}"><span><b>${esc(srcLabel(o.source))}</b>${o.agency ? ` · ${esc(o.agency)}` : ""}</span>
+      <span class="op">${fmt(o.price)} €${OFFER_STATUS[o.status] ? ` <span class="b mid">${OFFER_STATUS[o.status]}</span>` : ""}</span></a>`).join("")}</div></details>`;
+}
+function evidenceText(ev) {
+  const pair = (v, unit) => (v && v.length === 2 ? `${fmt(v[0])} / ${fmt(v[1])} ${unit}` : "");
+  return [ev.rule, ev.photos ? `${ev.photos} photo${ev.photos > 1 ? "s" : ""} commune${ev.photos > 1 ? "s" : ""}` : "aucune photo commune",
+    ev.price ? `prix ${pair(ev.price, "€")}` : "", ev.surface ? `surface ${pair(ev.surface, "m²")}` : "",
+    ev.distance_km != null ? `${ev.distance_km} km` : "", ev.text >= 0.2 ? `texte identique à ${Math.round(ev.text * 100)} %` : "",
+    ev.veto ? `veto : ${ev.veto}` : ""]
+    .filter(Boolean).map(esc).join(" · ");
+}
+function dupPane(x) {
+  return `<div class="dup-pane"><div class="dup-pics">${(x.photos || []).slice(0, 3).map((u) => `<img src="${esc(u)}" loading="lazy" alt="">`).join("") || `<div class="nophoto">⌂</div>`}</div>
+    <div><b>${fmt(x.price)} €</b> · ${esc((x.sources || [x.source]).map(srcLabel).join(", "))}</div>
+    <div>${fmt(x.surface_m2)} m² · terrain ${fmt(x.land_m2)} m² · ${x.rooms ?? "?"} p. · ${x.bedrooms ?? "?"} ch.</div>
+    <div class="muted">${esc(x.city || "")}${x.address ? " · " + esc(x.address) : ""}${x.excluded_reason ? ` · exclue : ${esc(x.excluded_reason)}` : ""}</div>
+    ${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">annonce ↗</a>` : ""}</div>`;
+}
+function dupBoxes(l) {
+  const me = { photos: photos(l), price: eff(l, "price"), surface_m2: eff(l, "surface_m2"), land_m2: eff(l, "land_m2"),
+    rooms: l.rooms, bedrooms: eff(l, "bedrooms"), city: eff(l, "city"), address: l.address, url: l.url,
+    sources: l.cluster ? l.cluster.sources : [l.source] };
+  return (l.suggestions || []).map((sg) => `<div class="box dupbox"><h3>⚠️ Doublon possible</h3>
+    <div class="dup-grid">${dupPane(me)}${dupPane(sg.other)}</div>
+    <div class="muted small">${evidenceText(sg.evidence || {})}</div>
+    <div class="addr-actions"><button class="btn sm" data-merge="${sg.other_id}" data-id="${l.id}">Fusionner</button>
+      <button class="btn ghost sm" data-notdup="${sg.other_id}" data-id="${l.id}">Pas un doublon</button>
+      <a class="btn ghost sm" href="#/l/${sg.other_id}">Ouvrir l'autre fiche</a></div></div>`).join("");
+}
+function sourcesBox(l) {
+  const os = offers(l);
+  if (os.length < 2) return "";
+  return `<div class="box"><h3>Sources fusionnées (${os.length})</h3>${os.map((o) => `<div class="src-row ${esc(o.status)}">
+    <a href="${esc(o.url)}" target="_blank" rel="noopener"><b>${esc(srcLabel(o.source))}</b>${o.agency ? ` · ${esc(o.agency)}` : ""}</a>
+    <span>${fmt(o.price)} €</span><span class="muted">${OFFER_STATUS[o.status] || "active"} · vue le ${new Date(o.last_seen).toLocaleDateString("fr-FR")}</span>
+    ${o.principal ? `<span class="muted small">principale</span>` : `<button class="btn ghost sm" data-split="${o.id}" data-id="${l.id}" title="Ce n'est pas le même bien">Séparer</button>`}
+  </div>`).join("")}</div>`;
+}
 async function openDetail(id) {
   if (state.openId === id && !$("#drawer").hidden) return;
   state.openId = id;
   markSeen(id);
   const l = await fetch(`/api/listings/${id}`).then((r) => r.json());
+  if (l.merged_into) { state.openId = null; location.replace(`#/l/${l.merged_into}`); return; }   // source fusionnée
   const e = l.enrichment || {}, c = l.commute || {};
   state.photos = photos(l); state.photoIdx = 0;
   const bars = Object.entries(l.score_details || {}).map(([k, v]) =>
     `<div class="bar"><span>${esc(k)}</span><div class="track"><div class="fill ${v < 0 ? "neg" : ""}" style="width:${Math.min(100, (Math.abs(v) / (SCORE_MAX[k] || 10)) * 100)}%"></div></div><b>${v > 0 ? "+" : ""}${v}</b></div>`).join("");
-  const hist = (l.price_history || []).map((h) => `${fmt(h.price)} € <span class="muted">(${new Date(h.date).toLocaleDateString("fr-FR")})</span>`).join(" → ");
+  const hist = l.cluster
+    ? (l.cluster.price_history.length > 1 ? l.cluster.price_history.map((h) => `${fmt(h.price)} € <span class="muted">(${esc(srcLabel(h.source))}${h.date ? ", " + new Date(h.date).toLocaleDateString("fr-FR") : ""})</span>`).join(" → ") : "")
+    : (l.price_history || []).map((h) => `${fmt(h.price)} € <span class="muted">(${new Date(h.date).toLocaleDateString("fr-FR")})</span>`).join(" → ");
+  const best = l.cluster && l.cluster.price ? l.cluster.price.offer_id : null;
+  const otherPrices = offers(l).filter((o) => o.id !== best && o.price && o.price !== eff(l, "price")).map((o) =>
+    `${fmt(o.price)} € <span class="muted">(${esc(srcLabel(o.source))}${OFFER_STATUS[o.status] ? ", " + OFFER_STATUS[o.status] : ""})</span>`).join(" · ");
   const yn = (v) => (v === true ? "oui" : v === false ? "non" : "?");
   const price = eff(l, "price"), surf = +eff(l, "surface_m2");
   $("#detail").innerHTML = `
     <div class="d-head"><button class="icon-btn" data-close title="Fermer (Échap)">✕</button>
       <h2>${esc(eff(l, "title"))}</h2><div class="fav">${favButtons(l)}</div>
-      <a class="btn" href="${esc(l.url)}" target="_blank" rel="noopener">Annonce ↗</a></div>
+      ${offerLinks(l)}</div>
     ${state.photos.length ? `<div class="carousel"><img id="c-img" src="${esc(state.photos[0])}" alt="">
       ${state.photos.length > 1 ? `<button class="prev" data-nav="-1">‹</button><button class="next" data-nav="1">›</button>` : ""}
       <span class="idx" id="c-idx">1 / ${state.photos.length}</span></div>
@@ -209,9 +262,12 @@ async function openDetail(id) {
           <div class="price-row"><span class="big-price">${fmt(price)} €</span>
             <span class="score" style="position:relative;top:0;left:0;--s:${l.score ?? 0};--c:${scoreCol(l.score ?? 0)}"><span>${l.score ?? "–"}</span></span></div>
           <div class="muted">${price && surf ? fmt(price / surf) + " €/m² · " : ""}${esc(eff(l, "city") || "")} ${esc(l.postal_code || "")}</div>
+          ${otherPrices ? `<div style="margin-top:6px">Autres prix : ${otherPrices}</div>` : ""}
           ${hist ? `<div style="margin-top:6px">Historique : ${hist}</div>` : ""}
           ${l.excluded_reason ? `<div style="margin-top:8px"><span class="b no">Exclue : ${esc(l.excluded_reason)}</span></div>` : ""}
+          <div class="addr-actions"><button class="btn ghost sm" data-merge-with="${l.id}" title="Doublon non détecté : réunir cette annonce et une autre">🔗 Fusionner avec…</button></div>
         </div>
+        ${dupBoxes(l)}${sourcesBox(l)}
         ${e.summary_fr ? `<div class="box"><h3>✦ Analyse de l'agent</h3><div>${esc(e.summary_fr)}</div>
           ${e.red_flags && e.red_flags.length ? `<ul class="flags">${e.red_flags.map((x) => `<li>⚠️ ${esc(x)}</li>`).join("")}</ul>` : ""}</div>` : ""}
         <div class="box"><h3>Caractéristiques</h3><dl class="kv">
@@ -223,7 +279,7 @@ async function openDetail(id) {
           <dt>Garage / jardin</dt><dd>${yn(eff(l, "has_garage"))} / ${yn(eff(l, "has_garden"))}</dd>
           <dt>Baignoire</dt><dd>${yn(eff(l, "has_bathtub"))}</dd>
           <dt>Travaux</dt><dd>${esc(WORKS[eff(l, "works")] || "?")}</dd>
-          <dt>Source</dt><dd>${esc(l.source)}${l.agency ? " · " + esc(l.agency) : ""} · vue le ${new Date(l.first_seen).toLocaleDateString("fr-FR")}</dd>
+          <dt>Source</dt><dd>${esc(l.cluster ? l.cluster.sources.map(srcLabel).join(", ") : srcLabel(l.source))}${l.agency ? " · " + esc(l.agency) : ""} · vue le ${new Date(l.first_seen).toLocaleDateString("fr-FR")}</dd>
         </dl></div>
         <div class="box"><h3>Description</h3><div class="desc">${esc((l.description || "").replace(/<br\s*\/?>/gi, "\n"))}</div></div>
       </div>
@@ -324,6 +380,33 @@ document.addEventListener("click", async (ev) => {
     return;
   }
   if (ev.target.closest("[data-close]")) return closeDetail();
+  const mw = ev.target.closest("[data-merge-with]");
+  if (mw) {   // doublon non détecté : l'utilisateur désigne l'autre annonce par son numéro (#/l/NUMÉRO)
+    const v = prompt("Numéro de l'autre annonce (visible dans son adresse : …#/l/NUMÉRO) :", "");
+    const other = parseInt((v || "").replace(/\D/g, ""), 10);
+    if (!other) return;
+    const r = await fetch(`/api/listings/${mw.dataset.mergeWith}/merge`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ other_id: other }) });
+    if (!r.ok) return alert("Fusion impossible : " + (r.status === 404 ? "annonce introuvable" : await r.text()));
+    const out = await r.json();
+    await load();
+    if (location.hash !== `#/l/${out.principal}`) location.hash = `#/l/${out.principal}`; else reopen(out.principal);
+    return;
+  }
+  const grp = ev.target.closest("[data-merge],[data-notdup],[data-split]");
+  if (grp) {   // actions sur les doublons : fusionner, refuser une suggestion, séparer une source
+    const id = +grp.dataset.id;
+    const [path, body] = grp.dataset.merge ? ["merge", { other_id: +grp.dataset.merge }]
+      : grp.dataset.notdup ? ["not_duplicate", { other_id: +grp.dataset.notdup }] : ["split", { member_id: +grp.dataset.split }];
+    if (path === "split" && !confirm("Séparer cette source ? Elle redeviendra une annonce à part et ne sera plus fusionnée automatiquement avec ce bien.")) return;
+    grp.disabled = true;
+    const r = await fetch(`/api/listings/${id}/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) { grp.disabled = false; return alert("Action impossible : " + (await r.text())); }
+    const out = await r.json();
+    await load();
+    const target = out.principal || id;
+    if (location.hash !== `#/l/${target}`) location.hash = `#/l/${target}`; else reopen(target);
+    return;
+  }
   const inv = ev.target.closest("[data-investigate]");
   if (inv) {
     const note = prompt("Un indice pour l'agent ? (facultatif — ex. « pas la bonne maison, c'est près du parc »)", "");

@@ -24,7 +24,8 @@ def green_facts():
                            {"source": "seloger", "active": 600, "last_seen_age_h": 5},
                            {"source": "pap", "active": 0, "last_seen_age_h": None}],
                "queue": [{"id": 1, "source": "seloger", "inv": False, "age_h": 3, "req_age_h": None}],
-               "enriched_24h": 20, "failed_24h": [], "no_summary_24h": [], "new_24h": 40},
+               "enriched_24h": 20, "failed_24h": [], "no_summary_24h": [], "new_24h": 40,
+               "dup_pending": {"count": 0, "oldest_h": None}},
         "jobs": {n: {"id": n, "enabled": True, "state": "scheduled", "paused_reason": None, "last_status": "ok",
                      "last_error": None, "last_run_age_h": 9.5, "completed_24h": 8, "failed_24h": 0,
                      "errors_24h": [], "empty_24h": 0, "limit_24h": 0} for n in hc.JOBS},
@@ -280,6 +281,32 @@ class StateIsolation(unittest.TestCase):
         f0, s0 = copy.deepcopy(f), copy.deepcopy(s)
         run(f, s)
         self.assertEqual((f, s), (f0, s0))
+
+
+class Duplicates(unittest.TestCase):
+    def test_merged_sources_are_out_of_the_queue_filter(self):
+        self.assertIn("merged_into IS NULL", hc.PENDING_SQL_FILTER)
+        self.assertIn("dup_pending", hc.DB_SQL)
+
+    def test_recent_suggestions_are_only_counted(self):
+        f = green_facts()
+        f["db"]["dup_pending"] = {"count": 4, "oldest_h": 30}
+        P, W, S, _ = run(f)
+        self.assertEqual((P, W), ([], []))
+        self.assertEqual(S["doublons_a_valider"], 4)
+
+    def test_week_old_suggestions_give_a_reminder(self):
+        f = green_facts()
+        f["db"]["dup_pending"] = {"count": 3, "oldest_h": 200}
+        P, W, _, _ = run(f)
+        self.assertEqual(P, [])
+        self.assertTrue(any("3 doublon(s) possible(s) à valider" in w for w in W))
+
+    def test_older_db_facts_without_dup_key_still_work(self):
+        f = green_facts()
+        del f["db"]["dup_pending"]
+        P, W, _, _ = run(f)
+        self.assertEqual((P, W), ([], []))
 
 
 if __name__ == "__main__":

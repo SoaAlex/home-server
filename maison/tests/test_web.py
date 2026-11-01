@@ -102,3 +102,125 @@ def test_pending_puts_recent_listings_first(client, dburl):
         conn.execute("UPDATE listing SET first_seen = now() - interval '5 days' WHERE external_id='a'")
     pend = client.get("/api/enrichment/pending", headers={"X-Token": "tok"}).json()
     assert [x["url"] for x in pend] == ["https://lbc/c", "https://e/a"]
+
+
+def _merged_pair(dburl, enrich_principal=None):
+    from app import dedupe
+    with db.connect(dburl) as conn:
+        p, _ = upsert(conn, dict(source="netty", external_id="p", url="https://e/p", price=400000, city="Wambrechies",
+                                 surface_m2=100, has_garage=True, has_garden=True))
+        m, _ = upsert(conn, dict(source="seloger", external_id="m", url="https://e/m", price=395000,
+                                 city="Wambrechies", surface_m2=100))
+        if enrich_principal:
+            from psycopg.types.json import Jsonb
+            conn.execute("UPDATE listing SET enrichment=%s, enrichment_status='done' WHERE id=%s",
+                         (Jsonb(enrich_principal), p))
+        assert dedupe.merge(conn, m, p, method="auto") == p
+    return p, m
+
+
+def test_pending_never_returns_merged_sources(client, dburl):
+    p, m = _merged_pair(dburl)
+    ids = {x["id"] for x in client.get("/api/enrichment/pending?limit=50", headers={"X-Token": "tok"}).json()}
+    assert p in ids and m not in ids
+
+
+def test_enrichment_posted_for_merged_source_is_kept_on_it(client, dburl):
+    p, m = _merged_pair(dburl, enrich_principal={"summary_fr": "Analyse de la principale", "style": "traditional"})
+    r = client.post(f"/api/listings/{m}/enrichment", json={"summary_fr": "Analyse tardive", "style": "modern",
+                                                          "land_m2": 300}, headers={"X-Token": "tok"})
+    assert r.status_code == 200, r.text
+    with db.connect(dburl) as conn:
+        rows = {x["id"]: x for x in conn.execute("SELECT id, enrichment, land_m2, cluster FROM listing "
+                                                 "WHERE id = ANY(%s)", ([p, m],)).fetchall()}
+    assert rows[p]["enrichment"]["summary_fr"] == "Analyse de la principale" and rows[p]["enrichment"]["style"] == "traditional"
+    assert rows[m]["enrichment"]["summary_fr"] == "Analyse tardive" and float(rows[m]["land_m2"]) == 300
+    assert rows[p]["cluster"]["fill"]["land_m2"] == 300          # groupe recalculé après le POST
+
+
+# ---------- API des biens fusionnés (spec merged-listings) ----------
+def test_list_returns_principals_with_offers(client, dburl):
+    p, m = _merged_pair(dburl)
+    rows = {x["id"]: x for x in client.get("/api/listings").json()}
+    assert p in rows and m not in rows
+    cl = rows[p]["cluster"]
+    assert cl["price"] == {"value": 395000, "offer_id": m} and [o["id"] for o in cl["offers"]] == [m, p]
+    assert rows[p]["dup_pending"] == 0
+
+
+def test_principal_detail_has_members_and_member_detail_points_to_principal(client, dburl):
+    p, m = _merged_pair(dburl)
+    d = client.get(f"/api/listings/{p}").json()
+    assert [x["id"] for x in d["members"]] == [m] and d["members"][0]["price"] == 395000 and d["suggestions"] == []
+    assert client.get(f"/api/listings/{m}").json()["merged_into"] == p
+
+
+def _suggested_pair(dburl):
+    from app import dedupe
+    with db.connect(dburl) as conn:
+        a, _ = upsert(conn, dict(source="bienici", external_id="sa", url="https://e/sa", price=497000,
+                                 city="Wambrechies", surface_m2=118))
+        b, _ = upsert(conn, dict(source="seloger", external_id="sb", url="https://e/sb", price=497000,
+                                 city="Wambrechies", surface_m2=118))
+        dedupe.suggest(conn, a, b, {"photos": 0, "rule": "caractéristiques jumelles", "surface": [118, 118]})
+    return a, b
+
+
+def test_suggestion_listed_counted_and_filtered(client, dburl):
+    a, b = _suggested_pair(dburl)
+    rows = {x["id"]: x for x in client.get("/api/listings").json()}
+    assert rows[a]["dup_pending"] == 1 and rows[b]["dup_pending"] == 1
+    assert {x["id"] for x in client.get("/api/listings?dups=1").json()} == {a, b}
+    s = client.get(f"/api/listings/{a}").json()["suggestions"]
+    assert len(s) == 1 and s[0]["other_id"] == b and s[0]["evidence"]["rule"] == "caractéristiques jumelles"
+    assert s[0]["other"]["price"] == 497000 and s[0]["other"]["source"] == "seloger"
+
+
+def test_merge_route_merges_and_clears_suggestion(client, dburl):
+    a, b = _suggested_pair(dburl)
+    r = client.post(f"/api/listings/{a}/merge", json={"other_id": b})
+    assert r.status_code == 200, r.text
+    keep = r.json()["principal"]
+    rows = {x["id"]: x for x in client.get("/api/listings").json()}
+    assert keep == a and b not in rows and rows[a]["dup_pending"] == 0
+    assert client.post(f"/api/listings/{a}/merge", json={"other_id": "x"}).status_code == 400
+
+
+def test_not_duplicate_hides_suggestion_for_good(client, dburl):
+    a, b = _suggested_pair(dburl)
+    assert client.post(f"/api/listings/{b}/not_duplicate", json={"other_id": a}).status_code == 200
+    assert client.get(f"/api/listings/{a}").json()["suggestions"] == []
+    from app import dedupe
+    with db.connect(dburl) as conn:
+        assert dedupe.suggest(conn, a, b, {"photos": 1}) is False      # refus mémorisé : jamais reproposée
+
+
+def test_split_route_restores_member_with_own_price(client, dburl):
+    p, m = _merged_pair(dburl)
+    r = client.post(f"/api/listings/{p}/split", json={"member_id": m})
+    assert r.status_code == 200, r.text
+    rows = {x["id"]: x for x in client.get("/api/listings").json()}
+    assert m in rows and rows[m]["price"] == 395000 and rows[p]["cluster"] is None
+    with db.connect(dburl) as conn:
+        st = conn.execute("SELECT status FROM duplicate_pair WHERE id_a=%s AND id_b=%s", (min(p, m), max(p, m))).fetchone()
+    assert st["status"] == "rejected"
+    assert client.post(f"/api/listings/{p}/split", json={"member_id": m}).status_code == 404
+
+
+def test_manual_merge_lifts_refusal(client, dburl):
+    a, b = _suggested_pair(dburl)
+    client.post(f"/api/listings/{a}/not_duplicate", json={"other_id": b})
+    assert client.post(f"/api/listings/{b}/merge", json={"other_id": a}).status_code == 200
+    with db.connect(dburl) as conn:
+        st = conn.execute("SELECT status, decided_by FROM duplicate_pair WHERE id_a=%s AND id_b=%s",
+                          (min(a, b), max(a, b))).fetchone()
+    assert st == {"status": "merged", "decided_by": "user"}
+
+
+def test_merge_two_designated_listings_and_unknown_id(client, dburl):
+    with db.connect(dburl) as conn:
+        a, _ = upsert(conn, dict(source="bienici", external_id="da", url="https://e/da", price=300000, city="Wambrechies"))
+        b, _ = upsert(conn, dict(source="pap", external_id="db", url="https://e/db", price=320000, city="Wambrechies"))
+    assert client.post(f"/api/listings/{a}/merge", json={"other_id": 999999}).status_code == 404
+    r = client.post(f"/api/listings/{b}/merge", json={"other_id": a})
+    assert r.status_code == 200 and {x["id"] for x in client.get("/api/listings").json()} & {a, b} == {r.json()["principal"]}

@@ -57,3 +57,26 @@ def test_send_discord_payload():
     e = seen["body"]["embeds"][0]
     assert e["title"].startswith("🏡 80/100") and e["image"]["url"] == "https://p/1.jpg"
     assert any(f["value"] == "420 000 €" for f in e["fields"])
+
+
+CLUSTER = {"price": {"value": 235000, "offer_id": 2}, "offers": [
+    {"id": 2, "source": "bienici", "url": "https://www.bienici.com/annonce/b", "price": 235000, "status": "active"},
+    {"id": 1, "source": "seloger", "url": "https://www.seloger.com/annonce/s", "price": 241500, "status": "active"},
+    {"id": 3, "source": "seloger", "url": "https://www.seloger.com/annonce/old", "price": 230000, "status": "stale"}]}
+
+
+def test_embed_of_multi_source_listing():
+    row = {"id": 1, "url": "https://www.seloger.com/annonce/s", "score": 80, "title": "Maison", "price": 241500,
+           "city": "Croix", "cluster": CLUSTER}
+    e = alerts.build_embed(row, {"commute": {"destinations": {}}})
+    f = {x["name"]: x["value"] for x in e["fields"]}
+    assert f["Prix"] == "235 000 €" and e["url"] == "https://www.bienici.com/annonce/b"
+    assert f["Sources (3)"].startswith("Bien'ici 235 000 €") and "(non confirmée)" in f["Sources (3)"]
+    assert e["description"].endswith("/#/l/1)")
+
+
+def test_members_never_alert():
+    crit = {"alert": {"min_score": 75, "max_price": 450000, "require_confirmed_garage_garden": False}}
+    row = {"id": 5, "score": 90, "price": 300000, "status": "active", "merged_into": 4}
+    assert not alerts.should_alert(row, crit)
+    assert alerts.should_alert({**row, "merged_into": None}, crit)

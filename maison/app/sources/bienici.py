@@ -58,7 +58,7 @@ def parse(payload: dict) -> list[dict]:
             photo_urls=[p["url_photo"] for p in ad.get("photos", []) if p.get("url_photo")],
             raw={k: ad.get(k) for k in ("id", "reference", "blurInfo", "priceHasDecreased",
                                          "modificationDate", "isExclusiveSaleMandate", "status",
-                                         "district")}))
+                                         "district", "newProperty")}))
     return out
 
 
