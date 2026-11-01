@@ -58,3 +58,43 @@ ALTER TABLE listing ADD COLUMN IF NOT EXISTS reaction TEXT;   -- like | dislike 
 ALTER TABLE listing ADD COLUMN IF NOT EXISTS seen_at TIMESTAMPTZ;   -- 1re ouverture de la fiche dans l'UI
 UPDATE listing SET reaction = 'like', user_status = NULL WHERE user_status = 'favorite';
 UPDATE listing SET reaction = 'dislike', user_status = NULL WHERE user_status = 'rejected';
+
+-- Déduplication des annonces (change OpenSpec merge-duplicate-listings).
+-- Une annonce secondaire pointe vers l'annonce principale de son groupe (groupes plats, jamais de chaîne) ;
+-- `cluster` = vue matérialisée du groupe sur la principale (offres, prix retenu, champs complétés, photos).
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS merged_into BIGINT REFERENCES listing(id) ON DELETE SET NULL;
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS merged_at TIMESTAMPTZ;
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS merge_method TEXT;     -- auto | user
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS cluster JSONB;
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS dedupe_sig TEXT;       -- empreinte des champs comparés au dernier passage
+CREATE INDEX IF NOT EXISTS listing_merged_idx ON listing (merged_into) WHERE merged_into IS NOT NULL;
+
+-- Empreintes visuelles des photos locales (pHash/dHash 64 bits stockés en BIGINT signé).
+CREATE TABLE IF NOT EXISTS listing_photo (
+    listing_id BIGINT NOT NULL REFERENCES listing(id) ON DELETE CASCADE,
+    idx        INTEGER NOT NULL,
+    path       TEXT NOT NULL,
+    phash      BIGINT NOT NULL,
+    dhash      BIGINT NOT NULL,
+    std        REAL NOT NULL,
+    file_size  BIGINT,
+    file_mtime DOUBLE PRECISION,
+    generic    BOOLEAN NOT NULL DEFAULT false,
+    hashed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (listing_id, idx)
+);
+
+-- Paires de doublons : preuves, suggestions (« doublon possible »), fusions et refus mémorisés.
+CREATE TABLE IF NOT EXISTS duplicate_pair (
+    id_a       BIGINT NOT NULL REFERENCES listing(id) ON DELETE CASCADE,
+    id_b       BIGINT NOT NULL REFERENCES listing(id) ON DELETE CASCADE,
+    status     TEXT NOT NULL,              -- suggested | merged | rejected
+    decided_by TEXT,                       -- auto | user
+    evidence   JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    decided_at TIMESTAMPTZ,
+    PRIMARY KEY (id_a, id_b),
+    CHECK (id_a < id_b)
+);
+CREATE INDEX IF NOT EXISTS duplicate_pair_b_idx ON duplicate_pair (id_b);
+CREATE INDEX IF NOT EXISTS duplicate_pair_status_idx ON duplicate_pair (status);

@@ -73,3 +73,23 @@ def test_user_added_listing_kept_above_budget():
     assert score_listing(over, CRIT)[2] == "prix > max"
     s, d, why = score_listing({**over, "enrichment": {"user_added": True}}, CRIT)
     assert why is None and d["prix"] == 0 and s > 0
+
+
+def test_multi_source_listing_scored_on_lowest_active_price_and_filled_land():
+    """Bien fusionné (cluster) : prix retenu = offre active la moins chère ; terrain complété par une autre source."""
+    alone = {**BASE, "price": 455000, "land_m2": None}
+    merged = {**alone, "cluster": {"price": {"value": 399000, "offer_id": 2}, "fill": {"land_m2": 420}}}
+    s0, d0, _ = score_listing(alone, CRIT)
+    s1, d1, _ = score_listing(merged, CRIT)
+    assert (d0["prix"], d0["jardin"]) == (5, 1) and (d1["prix"], d1["jardin"]) == (15, 12) and s1 > s0
+
+
+def test_filled_position_brings_its_commute():
+    row = {**BASE, "commute": {"total_min": 55}, "geo_precision": "city", "lat": 50.68, "lon": 3.05,
+           "cluster": {"fill": {"lat": 50.69, "lon": 3.04, "geo_precision": "exact", "commute": {"total_min": 25}}}}
+    assert score_listing(row, CRIT)[1]["trajet"] == 8
+
+
+def test_cluster_price_exclusion_uses_retained_price():
+    row = {**BASE, "price": 600000, "cluster": {"price": {"value": 520000, "offer_id": 9}}}
+    assert score_listing(row, CRIT)[2] is None

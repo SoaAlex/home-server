@@ -6,8 +6,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import httpx
 from psycopg.types.json import Jsonb
-from app import db, geo, settings
+from app import db, dedupe, geo, settings
 from app.collector import postprocess, rescore
+from app.scoring import effective, merged_columns
 
 app = FastAPI(title="Maison")
 templates = Jinja2Templates(directory="app/templates")
@@ -19,7 +20,7 @@ COLS = ("id, source, url, title, price, surface_m2, land_m2, rooms, bedrooms, pr
         "postal_code, dpe, ges, year_built, has_garage, has_garden, has_bathtub, works, agency, lat, lon, "
         "geo_precision, address, photos, photo_urls, first_seen, last_seen, published_at, status, "
         "price_history, commute, enrichment, enrichment_status, score, score_details, excluded_reason, "
-        "fingerprint, alerted_at, user_status, user_note, reaction, seen_at")
+        "fingerprint, alerted_at, user_status, user_note, reaction, seen_at, merged_into, cluster")
 # Champs que l'agent d'enrichissement peut écrire directement dans les colonnes (liste blanche)
 DIRECT = ("address", "lat", "lon", "city", "postal_code", "description", "title", "surface_m2",
           "land_m2", "bedrooms", "rooms", "dpe", "price")
@@ -47,25 +48,141 @@ def criteria():
     return {k: c[k] for k in ("price", "preferred_cities", "other_cities", "commute", "alert")}
 
 
+# Doublons possibles en attente, comptés par annonce principale (une paire peut relier deux secondaires).
+DUP_PENDING_CTE = """
+WITH pend AS (
+  SELECT coalesce(a.merged_into, a.id) AS pa, coalesce(b.merged_into, b.id) AS pb
+  FROM duplicate_pair p JOIN listing a ON a.id = p.id_a JOIN listing b ON b.id = p.id_b
+  WHERE p.status = 'suggested'),
+dup AS (
+  SELECT x AS dup_lid, count(*) AS dup_n FROM (
+    SELECT pa AS x FROM pend WHERE pa <> pb UNION ALL SELECT pb FROM pend WHERE pa <> pb) t GROUP BY x)
+"""
+ACTIVE_SQL = "(status = 'active' OR coalesce((cluster->>'active')::boolean, false))"
+
+
+def _view(row: dict) -> dict:
+    """Annonce principale telle qu'affichée : colonnes vides complétées par les autres sources du bien."""
+    return merged_columns(row) if row.get("cluster") else row
+
+
 @app.get("/api/listings")
-def listings(show_excluded: int = 0, include_gone: int = 0):
-    where = ["TRUE"]
+def listings(show_excluded: int = 0, include_gone: int = 0, dups: int = 0):
+    where = ["merged_into IS NULL"]           # un bien = une annonce (les sources fusionnées sont dans `cluster`)
     if not show_excluded:
         where.append("(excluded_reason IS NULL OR excluded_reason = 'à compléter')")
     if not include_gone:
-        where.append("status = 'active'")
+        where.append(ACTIVE_SQL)
+    if dups:
+        where.append("dup_n > 0")
     with db.connect() as conn:
-        return conn.execute(f"SELECT {COLS} FROM listing WHERE {' AND '.join(where)} "
+        rows = conn.execute(f"{DUP_PENDING_CTE} SELECT {COLS}, coalesce(dup_n, 0) AS dup_pending FROM listing "
+                            f"LEFT JOIN dup ON dup_lid = listing.id WHERE {' AND '.join(where)} "
                             "ORDER BY score DESC NULLS LAST, first_seen DESC").fetchall()
+    return [_view(r) for r in rows]
+
+
+SUMMARY_COLS = ("id, source, url, title, price, surface_m2, land_m2, rooms, bedrooms, city, postal_code, address, "
+                "agency, status, score, excluded_reason, reaction, photos, photo_urls, enrichment, cluster, "
+                "first_seen, last_seen, merged_into, geo_precision, lat, lon, dpe")
+
+
+def _summary(row: dict) -> dict:
+    eff = effective(row)
+    cl = row.get("cluster") or {}
+    pics = cl.get("photos") or ([f"/photos/{p}" for p in row["photos"]] if row["photos"] else row["photo_urls"] or [])
+    return {"id": row["id"], "source": row["source"], "url": row["url"], "title": eff.get("title"),
+            "price": eff.get("price"), "surface_m2": eff.get("surface_m2"), "land_m2": eff.get("land_m2"),
+            "rooms": eff.get("rooms"), "bedrooms": eff.get("bedrooms"), "city": eff.get("city"),
+            "address": eff.get("address"), "agency": row["agency"], "status": row["status"], "score": row["score"],
+            "excluded_reason": row["excluded_reason"], "reaction": row["reaction"], "dpe": eff.get("dpe"),
+            "sources": cl.get("sources") or [row["source"]], "photos": pics[:4]}
+
+
+def _suggestions(conn, group: list[int]) -> list[dict]:
+    """Doublons possibles du bien : l'autre annonce (principale de son groupe), preuves de la meilleure paire."""
+    out = {}
+    for p in conn.execute("SELECT id_a, id_b, evidence, created_at FROM duplicate_pair WHERE status='suggested' "
+                          "AND (id_a = ANY(%s) OR id_b = ANY(%s)) ORDER BY created_at", (group, group)).fetchall():
+        other = p["id_b"] if p["id_a"] in group else p["id_a"]
+        o = conn.execute(f"SELECT {SUMMARY_COLS} FROM listing WHERE id = (SELECT coalesce(merged_into, id) "
+                         "FROM listing WHERE id=%s)", (other,)).fetchone()
+        if not o or o["id"] in group:
+            continue
+        ev = p["evidence"] or {}
+        best = out.get(o["id"])
+        if not best or (ev.get("photos") or 0) > (best["evidence"].get("photos") or 0):
+            out[o["id"]] = {"other_id": o["id"], "pair": [p["id_a"], p["id_b"]], "evidence": ev,
+                            "created_at": p["created_at"], "other": _summary(o)}
+    return list(out.values())
 
 
 @app.get("/api/listings/{lid}")
 def listing(lid: int):
     with db.connect() as conn:
         row = conn.execute(f"SELECT {COLS}, description, raw->'blurInfo' AS blur FROM listing WHERE id=%s", (lid,)).fetchone()
-    if not row:
-        raise HTTPException(404)
-    return row
+        if not row:
+            raise HTTPException(404)
+        if row["merged_into"]:                # source secondaire : l'UI ouvre la fiche principale
+            return row
+        members = conn.execute(f"SELECT {SUMMARY_COLS} FROM listing WHERE merged_into=%s ORDER BY id", (lid,)).fetchall()
+        group = [lid] + [m["id"] for m in members]
+        return {**_view(row), "members": [_summary(m) for m in members], "suggestions": _suggestions(conn, group)}
+
+
+def _rescore(conn, ids, refresh_ids=()):
+    """Recalcule les scores après une action sur un groupe (postprocess des annonces redevenues seules)."""
+    crit = settings.load_criteria()
+    with httpx.Client(headers={"User-Agent": settings.USER_AGENT}, timeout=30) as client:
+        for i in refresh_ids:
+            try:
+                postprocess(conn, client, crit, i)
+            except Exception:
+                pass
+        rescore(conn, client, crit, ids=list(ids))
+
+
+@app.post("/api/listings/{lid}/merge")
+def merge_listing(lid: int, body: dict):
+    """Fusion manuelle (doublon possible validé, ou deux annonces désignées) ; lève un refus antérieur."""
+    other = body.get("other_id")
+    if not isinstance(other, int) or other == lid:
+        raise HTTPException(400, "other_id = identifiant d'une autre annonce")
+    with db.connect() as conn:
+        try:
+            keep = dedupe.merge(conn, lid, other, method="user")
+        except LookupError:
+            raise HTTPException(404)
+        _rescore(conn, [keep])
+    return {"principal": keep}
+
+
+@app.post("/api/listings/{lid}/split")
+def split_listing(lid: int, body: dict):
+    """Sépare une source fusionnée : elle redevient une annonce seule, et la refusion est bloquée."""
+    member = body.get("member_id")
+    with db.connect() as conn:
+        try:
+            principal = dedupe.principal_of(conn, lid)
+            dedupe.split(conn, principal, member)
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        _rescore(conn, [principal, member], refresh_ids=[member])
+    return {"principal": principal, "member": member}
+
+
+@app.post("/api/listings/{lid}/not_duplicate")
+def not_duplicate(lid: int, body: dict):
+    """« Pas un doublon » : la suggestion disparaît et ne sera plus proposée."""
+    other = body.get("other_id")
+    if not isinstance(other, int) or other == lid:
+        raise HTTPException(400, "other_id = identifiant d'une autre annonce")
+    with db.connect() as conn:
+        try:
+            dedupe.reject(conn, lid, other)
+        except LookupError:
+            raise HTTPException(404)
+    return {"ok": True}
 
 
 @app.post("/api/listings/{lid}/user")
@@ -150,6 +267,7 @@ def pending(limit: int = 5, x_token: str = Header(None)):
     with db.connect() as conn:
         return conn.execute(
             f"SELECT {COLS}, description, raw->'blurInfo' AS blur FROM listing WHERE status='active' AND enrichment_status='pending' "
+            "AND merged_into IS NULL "     # sources secondaires d'un bien fusionné : jamais proposées à l'agent
             "AND (excluded_reason IS NULL OR excluded_reason='à compléter') "
             "AND (reaction IS DISTINCT FROM 'dislike' OR enrichment ? 'address_request') "
             "ORDER BY (enrichment ? 'address_request') DESC, (first_seen > now() - interval '48 hours') DESC, score DESC NULLS LAST, first_seen DESC LIMIT %s",
@@ -245,12 +363,16 @@ def enrich(lid: int, body: dict, x_token: str = Header(None)):
         if photo_urls:
             conn.execute("UPDATE listing SET photo_urls=%s, photos='[]' WHERE id=%s", (Jsonb(photo_urls), lid))
         crit = settings.load_criteria()
+        principal = conn.execute("SELECT merged_into FROM listing WHERE id=%s", (lid,)).fetchone()["merged_into"]
         with httpx.Client(headers={"User-Agent": settings.USER_AGENT}, timeout=30) as client:
             rescore(conn, client, crit, ids=[lid])
             try:
                 postprocess(conn, client, crit, lid)
             except Exception:
                 pass
+            if principal:   # annonce fusionnée entre-temps : enrichissement gardé sur elle, groupe recalculé
+                dedupe.refresh_cluster(conn, principal)
+                rescore(conn, client, crit, ids=[principal])
             rescore(conn, client, crit, ids=[lid])
         # rescore ne doit pas faire repasser en pending une annonce qu'on vient d'enrichir
         conn.execute("UPDATE listing SET enrichment_status=%s WHERE id=%s AND enrichment_status='pending'",

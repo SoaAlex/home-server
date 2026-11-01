@@ -7,10 +7,35 @@ OVERRIDABLE = ("has_garage", "has_garden", "has_bathtub", "works", "property_typ
                "land_m2", "dpe", "bedrooms", "price", "surface_m2", "city")
 
 
+POSITION = ("lat", "lon", "geo_precision", "address", "commute")
+
+
+def merged_columns(row: dict) -> dict:
+    """Colonnes de l'annonce principale complétées par les autres sources de son groupe (`cluster.fill`) :
+    champs vides seulement ; la position (lat/lon/précision/adresse/trajets) remplace un simple centroïde."""
+    fill = (row.get("cluster") or {}).get("fill") or {}
+    if not fill:
+        return row
+    out = dict(row)
+    for k, v in fill.items():
+        if k not in POSITION and out.get(k) is None:
+            out[k] = v
+    if fill.get("lat") is not None and (row.get("lat") is None or row.get("geo_precision") in (None, "city")):
+        out.update({k: fill[k] for k in POSITION if k in fill})
+    elif fill.get("address") and not row.get("address"):
+        out["address"] = fill["address"]
+    return out
+
+
 def effective(row: dict) -> dict:
-    """Champs bruts de l'annonce, surchargés par l'enrichissement (agent Hermes)."""
+    """Champs de l'annonce (complétés par son groupe), surchargés par l'enrichissement (agent Hermes) ;
+    pour un bien multi-sources, le prix retenu est le plus bas des offres actives (`cluster.price`)."""
     enr = row.get("enrichment") or {}
-    return {**row, **{k: enr[k] for k in OVERRIDABLE if enr.get(k) is not None}}
+    out = {**merged_columns(row), **{k: enr[k] for k in OVERRIDABLE if enr.get(k) is not None}}
+    cp = ((row.get("cluster") or {}).get("price") or {}).get("value")
+    if cp is not None:
+        out["price"] = cp
+    return out
 
 
 def score_listing(row: dict, crit: dict) -> tuple[int, dict, str | None]:
@@ -55,7 +80,7 @@ def score_listing(row: dict, crit: dict) -> tuple[int, dict, str | None]:
     d["baignoire"] = 3 if r.get("has_bathtub") else 0
     d["chambres"] = (3 if (r.get("bedrooms") or 0) >= 3 else 0) + \
                     (4 if (enr.get("largest_bedroom_m2") or 0) >= 14 else 0)
-    total_min = (row.get("commute") or {}).get("total_min")
+    total_min = (r.get("commute") or {}).get("total_min")
     d["trajet"] = (0 if total_min is None else 8 if total_min <= 30 else
                    5 if total_min <= 40 else 2 if total_min <= 50 else 0)
     d["style"] = -4 if enr.get("style") == "cubic" else 0

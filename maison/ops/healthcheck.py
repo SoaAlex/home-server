@@ -13,7 +13,8 @@ Il répond à deux questions :
 2. Aucune analyse bloquée ? Une annonce de la file standard vue « pending » par le contrôle précédent (≥ 20 h)
    et toujours en attente, une demande « Investiguer » de plus de 12 h, une file qui ne baisse pas (0 fiche
    enrichie en 24 h alors qu'il y avait du travail), des fiches passées en `failed`, ou enrichies sans
-   `summary_fr` (JSON partiel).
+   `summary_fr` (JSON partiel). Les sources secondaires d'un bien fusionné (doublons) sont hors file ; des
+   doublons possibles non validés depuis plus d'une semaine donnent un rappel ⚠️.
 
 Lecture seule : aucune écriture en base ni redémarrage. État entre deux contrôles (dates de première
 observation des fiches en attente, compteurs de redémarrage) dans ~/.local/state/maison-health/.
@@ -54,13 +55,14 @@ MAIL_STALE_H = 48
 CYCLE_LATE_H = 3
 STUCK_SEEN_H = 20          # vue en attente au contrôle de la veille et toujours là = bloquée
 INVESTIGATION_LATE_H = 12  # le job d'investigation tourne toutes les 30 min de 8 h à 22 h
+DUP_PENDING_WARN_H = 7 * 24  # doublons possibles à valider dans l'UI : rappel au-delà d'une semaine
 BACKLOG_WARN = 45          # ≈ 3 passes de 15
 ENRICH_RUN_LATE_H = 26     # le job standard tourne de 8 h à 22 h : dernier tir la veille au soir
 INVESTIGATION_RUN_LATE_H = 26
 DISK_MIN_FREE = 3 * 1024**3
 LIMIT_MARKERS = re.compile(r"not processed|usage limit|rate.?limit|HTTP 429|session limit|CRON_FAILURE", re.I)
 
-PENDING_SQL_FILTER = ("status='active' AND enrichment_status='pending' "
+PENDING_SQL_FILTER = ("status='active' AND enrichment_status='pending' AND merged_into IS NULL "
                       "AND (excluded_reason IS NULL OR excluded_reason='à compléter') "
                       "AND (reaction IS DISTINCT FROM 'dislike' OR enrichment ? 'address_request')")   # = /api/enrichment/pending
 
@@ -81,7 +83,11 @@ SELECT json_build_object(
  'no_summary_24h', (SELECT coalesce(json_agg(id ORDER BY id), '[]') FROM listing
                     WHERE enrichment_status='done' AND enriched_at > now() - interval '24 hours'
                       AND NOT enrichment ? 'summary_fr'),
- 'new_24h', (SELECT count(*) FROM listing WHERE first_seen > now() - interval '24 hours')
+ 'new_24h', (SELECT count(*) FROM listing WHERE first_seen > now() - interval '24 hours'),
+ 'dup_pending', (SELECT json_build_object('count', count(*), 'oldest_h',
+                     round((extract(epoch FROM now() - min(p.created_at)) / 3600.0)::numeric, 2))
+                 FROM duplicate_pair p JOIN listing a ON a.id = p.id_a JOIN listing b ON b.id = p.id_b
+                 WHERE p.status = 'suggested' AND coalesce(a.merged_into, a.id) <> coalesce(b.merged_into, b.id))
 );
 """
 
@@ -444,10 +450,14 @@ def evaluate(f, state):
         P.append("fiches marquées en échec par l'agent en 24 h : " + ", ".join(f"#{i}" for i in db["failed_24h"]))
     if db.get("no_summary_24h"):
         W.append("fiches enrichies sans résumé (JSON partiel ?) : " + ", ".join(f"#{i}" for i in db["no_summary_24h"]))
+    dup = db.get("dup_pending") or {}
+    if dup.get("count") and (dup.get("oldest_h") or 0) > DUP_PENDING_WARN_H:
+        W.append(f"{dup['count']} doublon(s) possible(s) à valider dans l'UI (filtre « Doublons à valider »), "
+                 f"le plus ancien depuis {fmt_h(dup['oldest_h'])}")
     new_state["queue_standard"] = len(std)
     S.update(enrichies_24h=enriched, file=len(std), investigations=len(inv),
              plus_ancienne_h=round(max((now - new_state["pending_first_seen"][str(q["id"])]) / 3600 for q in std), 2)
-             if std else 0, nouvelles_24h=db.get("new_24h"))
+             if std else 0, nouvelles_24h=db.get("new_24h"), doublons_a_valider=dup.get("count", 0))
 
     # --- maison-web (journaux)
     wl = f["web_log"]
