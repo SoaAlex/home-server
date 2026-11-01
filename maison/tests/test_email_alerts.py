@@ -1,7 +1,7 @@
 import os
 from email.message import EmailMessage
 import pytest
-from app.sources.email_alerts import parse_message, make_resolver
+from app.sources.email_alerts import parse_message, make_resolver, _match
 
 FIX = "tests/fixtures/"
 CITIES = ["Wambrechies", "Lambersart", "Croix", "Marcq-en-Barœul", "Lille", "La Madeleine", "Roubaix"]
@@ -80,3 +80,55 @@ def test_real_mails_carry_ad_thumbnails():
 
     sl = parse_message(open(FIX + "seloger_mail.eml", "rb").read(), make_resolver(Client()), CITIES)
     assert len(sl) == 1 and len(sl[0]["photo_urls"]) == 1 and "w=540" in sl[0]["photo_urls"][0]
+
+
+# --- Identifiant SeLoger : toujours le DERNIER segment du chemin ---------------------------------------------------
+# Régression : le motif « …/annonce/…/([A-Za-z0-9]{8,}) » n'était pas ancré en fin de chemin. Pour une ville dont le
+# premier mot compte au moins 8 lettres (« lambersart-59130 »), il prenait « lambersart » pour l'identifiant : toutes
+# les annonces de la ville s'écrasaient sur une seule ligne (520 écrasements du 10/10 au 01/11/2026).
+LONG_CITY_SLUGS = ["lambersart-59130", "wasquehal-59290", "wambrechies-59118", "marquette-lez-lille-59520",
+                   "perenchies-59840", "villeneuve-d-ascq-59650", "ennetieres-en-weppes-59320", "linselles-59126",
+                   "lille-59000", "croix-59170", "bondues-59910", "mons-en-baroeul-59370"]   # les 4 derniers : déjà OK
+
+
+@pytest.mark.parametrize("slug", LONG_CITY_SLUGS)
+@pytest.mark.parametrize("suffix", ["", "?utm_source=crm-b2c&utm_medium=email", "#haut", "/"])
+def test_seloger_listing_id_is_the_last_path_segment(slug, suffix):
+    base = f"https://www.seloger.com/annonce/achat/hauts-de-france/nord-59/{slug}/2645ZUHMDZ7I"
+    assert _match(base + suffix) == ("seloger", "2645ZUHMDZ7I", base)
+
+
+@pytest.mark.parametrize("url", [
+    "https://www.seloger.com/annonce/achat/hauts-de-france/nord-59/lambersart-59130",        # page de ville
+    "https://www.seloger.com/annonce/achat/hauts-de-france/nord-59/lambersart-59130?utm_source=x",
+    "https://www.seloger.com/annonce/achat/hauts-de-france/nord-59",
+])
+def test_seloger_city_page_is_not_a_listing(url):
+    assert _match(url) is None
+
+
+def test_seloger_legacy_htm_links_unchanged():
+    url = "https://www.seloger.com/annonces/achat/maison/lambersart-59/canon-d-or/261497889.htm?x=1"
+    assert _match(url) == ("seloger", "261497889",
+                           "https://www.seloger.com/annonces/achat/maison/lambersart-59/canon-d-or/261497889.htm")
+
+
+def test_seloger_two_ads_of_the_same_long_city_stay_distinct():
+    base = "https://www.seloger.com/annonce/achat/hauts-de-france/nord-59/lambersart-59130/"
+    targets = {"AAA": base + "2645ZUHMDZ7I?utm_source=x", "BBB": base + "26AB12CD34EF?utm_source=x",
+               "ZZZ": "https://www.seloger.com/mes-alertes"}
+    html = ('<a href="https://click.by.seloger.com/?qs=AAA">389 000 € 4 862,50 €/m²</a>'
+            '<a href="https://click.by.seloger.com/?qs=AAA">6 pièces · 80 m² · 130 m²</a>'
+            '<a href="https://click.by.seloger.com/?qs=BBB">459 000 € 4 061,95 €/m²</a>'
+            '<a href="https://click.by.seloger.com/?qs=BBB">6 pièces · 113 m² Braille-Verghelles-Cité Familiale, '
+            'Lambersart (59130)</a>'
+            '<a href="https://click.by.seloger.com/?qs=ZZZ">Gérer mes alertes</a>')
+
+    class Client:
+        def get(self, url, follow_redirects=True, timeout=None):
+            return type("R", (), {"headers": {"location": targets[url.rsplit("=", 1)[1]]}})()
+
+    items = parse_message(mail(html), make_resolver(Client()), CITIES)
+    assert [(i["external_id"], i["price"]) for i in items] == [("2645ZUHMDZ7I", 389000), ("26AB12CD34EF", 459000)]
+    assert items[0]["url"].endswith("/lambersart-59130/2645ZUHMDZ7I") and items[0]["surface_m2"] == 80
+    assert items[1]["surface_m2"] == 113 and items[1]["city"] == "Lambersart"

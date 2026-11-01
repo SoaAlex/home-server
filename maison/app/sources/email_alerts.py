@@ -20,8 +20,11 @@ from app import textparse as tp
 log = logging.getLogger(__name__)
 PATTERNS = {
     "leboncoin": re.compile(r"https?://(?:www\.)?leboncoin\.fr/(?:vi/|(?:ad/)?ventes_immobilieres/)(\d+)"),
+    # Nouveau format : l'identifiant est le DERNIER segment du chemin. Sans le lookahead, « …/nord-59/lambersart-59130/<ID> »
+    # donnait « lambersart » (1er segment de ≥ 8 caractères alphanumériques) : toutes les annonces de la ville
+    # s'écrasaient sur une seule ligne.
     "seloger": re.compile(r"https?://(?:www\.)?seloger\.com/annonces/achat/[^\s\"'<>?#]*?/(\d+)\.htm"
-                          r"|https?://(?:www\.)?seloger\.com/annonce/[^\s\"'<>?#]*?/([A-Za-z0-9]{8,})"),
+                          r"|https?://(?:www\.)?seloger\.com/annonce/[^\s\"'<>?#]*?/([A-Za-z0-9]{8,})(?=/?(?:[?#\s\"'<>]|$))"),
     "pap": re.compile(r"https?://(?:www\.)?pap\.fr/annonces/[^\s\"'<>?]*-r(\d+)"),
     "jinka": re.compile(r"https?://(?:www\.)?jinka\.fr/[^\s\"'<>]*?(?:ad|alert_result)[^\s\"'<>]*?[?&/]ad=?/?(\d+)"),
 }
