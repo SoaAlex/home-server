@@ -588,6 +588,7 @@ def nightly() -> int:
     rep = {"kind": "nightly", "date": day, "started": now_iso(), "warnings": [], "failed": {}}
     t0 = time.time()
     ensure_image()
+    clear_stale_locks(rep)  # an exclusive lock left by a killed prune would block the backup
     steps = (("postgres", lambda: dump_postgres(day, rep)), ("sqlite", lambda: copy_sqlite(rep)),
              ("hermes", lambda: copy_hermes_dbs(rep)), ("restic", lambda: restic_backup(rep)),
              ("offsite", lambda: nightly_offsite(rep)))
@@ -595,7 +596,10 @@ def nightly() -> int:
         log(f"step {name}")
         ts = time.time()
         try:
-            fn()
+            if name == "offsite":  # no retry: the monthly or the next night takes over (and the night stays short)
+                fn()
+            else:
+                attempt(name, fn, rep)
             log(f"step {name}: ok ({time.time() - ts:.0f} s)")
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"[:600]
@@ -608,10 +612,12 @@ def nightly() -> int:
     rep["status"] = "failed" if rep["failed"] else "warning" if rep["warnings"] else "ok"
     rep["duration_s"] = round(time.time() - t0)
     record(rep)
-    if rep["status"] != "ok":
+    if rep["status"] != "ok" or rep.get("autofix"):
         head = ("❌ **Sauvegarde NAS du {d} : échec**" if rep["status"] == "failed"
-                else "⚠️ **Sauvegarde NAS du {d} : terminée avec des avertissements**").format(d=fr_date(day))
+                else "⚠️ **Sauvegarde NAS du {d} : terminée avec des avertissements**" if rep["status"] == "warning"
+                else "🔧 **Sauvegarde NAS du {d} : OK après correction automatique**").format(d=fr_date(day))
         lines = [head] + [f"• étape {k} : {v}" for k, v in rep["failed"].items()] + [f"• {w}" for w in rep["warnings"][:8]]
+        lines += [f"• 🔧 {a}" for a in rep.get("autofix", [])]
         lines.append(log_hint() or "Détails sur le NAS : `journalctl --user -u nas-backup -n 100`")
         discord("\n".join(lines))
     log(f"done: {rep['status']} in {rep['duration_s']} s")
@@ -772,6 +778,7 @@ def weekly() -> int:
     ensure_image()
     subset = dt.date.today().isocalendar()[1] % 8 + 1
     rep["check_subset"] = f"{subset}/8"
+    clear_stale_locks(rep)  # forget --prune and check need an exclusive lock
 
     def forget():  # --retry-lock: the monthly restore test may be reading the repository
         run(restic_cmd(["forget", "--retry-lock", "2h", "--host", HOST, "--tag", "nightly", *RETENTION, "--prune"]),
@@ -789,7 +796,7 @@ def weekly() -> int:
         log(f"step {name}")
         ts = time.time()
         try:
-            fn()
+            attempt(name, fn, rep)
             log(f"step {name}: ok ({time.time() - ts:.0f} s)")
         except Exception as e:
             rep["failed"][name] = f"{type(e).__name__}: {e}"[:600]
@@ -842,7 +849,8 @@ def weekly_message(rep: dict) -> str:
                      "Vaultwarden/WireGuard identiques au réel")
     lines += [f"• étape {k} en échec : {v}" for k, v in rep["failed"].items()]
     lines += [f"• {w}" for w in rep["warnings"][:6]]
-    if rep["status"] != "ok" and (hint := log_hint()):
+    lines += [f"• 🔧 Corrigé automatiquement : {a}" for a in rep.get("autofix", [])]
+    if (rep["status"] != "ok" or rep.get("autofix")) and (hint := log_hint()):
         lines.append(hint)
     return "\n".join(lines)
 
@@ -954,6 +962,94 @@ class MemoryGuard:
     def __exit__(self, *exc) -> None:  # never swallows an exception
         self._stop.set()
         self._thread.join(timeout=150)
+
+
+# ---------------------------------------------------------------- self-repair: automatic fix, then another try
+
+# A run killed by earlyoom (or a power cut) leaves its restic lock in the repository. Every restic here runs as
+# PID 1 of its container, so restic cannot see that the owner is dead; such a lock blocks every later prune and
+# check (exclusive lock) until removed: 2026-11-01, the weekly waited 2 x 2 h on a 35 h old lock, then failed.
+LOCK_ERROR = re.compile(r"already locked|unable to create lock|failed to (create|refresh) lock|exit 11 \(", re.I)
+KILLED_ERROR = re.compile(r"exit (-9|-15|130|137|143)\b|signal (killed|terminated)", re.I)
+# a human must look: retrying would only hide it (or make it worse)
+NO_RETRY_ERROR = re.compile(r"repository contains errors|errors were found|ciphertext verification failed|damaged|"
+                            r"wrong password|exit (10|12) \(|timeout after", re.I)
+TRIES = 3
+RETRY_PAUSE = 300
+
+
+def unlock_stale(*, offsite: bool = False) -> int:
+    """`restic unlock` WITHOUT --remove-all: removes only the locks restic deems stale, i.e. not refreshed for
+    30 min (a running restic refreshes its lock every 5 min), so the jobs running beside keep theirs.
+    Returns how many were removed; never raises (a failed unlock is logged, the retry tells the rest)."""
+    where = "Google Drive" if offsite else "RAID"
+    try:
+        p = run(restic_cmd(["unlock"], offsite=offsite, name=fresh(f"nas-backup-unlock{'-offsite' if offsite else ''}")),
+                capture_output=True, text=True, timeout=1800, check=False)
+    except StepError as e:
+        log(f"unlock ({where}) not done: {e}")
+        return 0
+    out = (p.stdout or "") + (p.stderr or "")
+    if p.returncode != 0:
+        log(f"unlock ({where}) exit {p.returncode}: {out.strip()[-300:]}")
+        return 0
+    m = re.search(r"removed (\d+) lock", out)
+    n = int(m.group(1)) if m else 0
+    if n:
+        log(f"removed {n} stale restic lock(s) from the {where} repository (left by a killed run)")
+    return n
+
+
+def clear_stale_locks(rep: dict, repos=("local",)) -> None:
+    """Before the steps that need an exclusive lock: sweep the dead locks, and say so in the recap."""
+    for r in repos:
+        if (n := unlock_stale(offsite=r == "offsite")):
+            rep.setdefault("autofix", []).append(
+                f"{n} verrou(s) mort(s) supprimé(s) sur le dépôt {'Google Drive' if r == 'offsite' else 'du RAID'} "
+                "(laissé(s) par une exécution tuée)")
+
+
+def attempt(name: str, fn, rep: dict, *, repos=("local",), tries: int = TRIES, pause: int = RETRY_PAUSE) -> None:
+    """Run step fn; if it fails, apply an automatic fix and run it again, `tries` runs in all:
+      - restic refused the lock     -> remove the stale locks of `repos` and go again at once (if none was
+                                       stale, a live job holds it: wait `pause` s);
+      - container killed (earlyoom) -> wait for free memory (up to 2 h), go again;
+      - anything else               -> go again after `pause` s (Docker, disk or Google Drive hiccup).
+    Never retried: a damaged repository, a wrong password, a timeout, a dead Google token (AuthError), a bug in
+    this script. Warnings added by a failed run are dropped (the next run adds them again). A step that only
+    succeeded thanks to a fix is listed in rep["autofix"] (recaps)."""
+    fixes = []
+    for k in range(1, tries + 1):
+        mark = len(rep["warnings"])
+        try:
+            fn()
+        except AuthError:
+            raise
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+            if (k == tries or NO_RETRY_ERROR.search(msg)
+                    or isinstance(e, (TypeError, KeyError, AttributeError, NameError, IndexError))):
+                if fixes:
+                    raise StepError(f"{e} [{k} essais ; corrections tentées : {', '.join(fixes)}]") from e
+                raise
+            del rep["warnings"][mark:]
+            if LOCK_ERROR.search(msg):
+                n = sum(unlock_stale(offsite=r == "offsite") for r in repos)
+                fix = f"{n} verrou(s) mort(s) supprimé(s)" if n else "dépôt verrouillé par une autre tâche, attente"
+                if not n:
+                    time.sleep(pause)
+            elif KILLED_ERROR.search(msg):
+                fix = "relancé après un arrêt brutal (mémoire ?)"
+                wait_for_memory(2 * 3600, what=name)
+            else:
+                fix = "relancé"
+                time.sleep(pause)
+            fixes.append(fix)
+            log(f"step {name}: try {k}/{tries} failed ({msg[:300]}); auto-fix: {fix}; trying again")
+            continue
+        if fixes:
+            rep.setdefault("autofix", []).append(f"étape {name} réussie au {k}e essai ({', '.join(fixes)})")
+        return
 
 
 def fmt_int(n) -> str:
@@ -1343,15 +1439,21 @@ def monthly() -> int:
         except StepError as e:
             log(f"first copy not done: {e}")
 
-    steps = (("copy", first_copy), ("data", lambda: offsite_data_backup(rep, camp)),
-             ("copy-end", lambda: offsite_copy(rep, name=MONTHLY_COPY, max_wait=8 * 3600)),
-             ("forget", lambda: offsite_forget_prune(rep)), ("check", lambda: offsite_check(rep)),
-             ("restore", lambda: offsite_restore_test(rep)), ("stats", lambda: offsite_stats(rep)))
-    for name, fn in steps:
+    # repositories whose stale locks a retry may clear (the data step and the first copy retry on their own)
+    both, gdrive = ("local", "offsite"), ("offsite",)
+    steps = (("copy", first_copy, None), ("data", lambda: offsite_data_backup(rep, camp), None),
+             ("copy-end", lambda: offsite_copy(rep, name=MONTHLY_COPY, max_wait=8 * 3600), both),
+             ("unlock", lambda: clear_stale_locks(rep, both), None),  # runs killed during the upload left theirs
+             ("forget", lambda: offsite_forget_prune(rep), gdrive), ("check", lambda: offsite_check(rep), gdrive),
+             ("restore", lambda: offsite_restore_test(rep), both), ("stats", lambda: offsite_stats(rep), gdrive))
+    for name, fn, repos in steps:
         log(f"step {name}")
         ts = time.time()
         try:
-            fn()
+            if repos:
+                attempt(name, fn, rep, repos=repos)
+            else:
+                fn()
             log(f"step {name}: ok ({time.time() - ts:.0f} s)")
         except AuthError as e:
             rep["failed"][name] = str(e)
@@ -1401,7 +1503,8 @@ def monthly_message(rep: dict) -> str:
                      f"identiques au réel" + (f", {x['changed_since']} modifiés depuis" if x["changed_since"] else ""))
     lines += [f"• étape {k} en échec : {v}" for k, v in rep["failed"].items()]
     lines += [f"• {w}" for w in rep["warnings"][:6]]
-    if rep["status"] != "ok" and (hint := log_hint()):
+    lines += [f"• 🔧 Corrigé automatiquement : {a}" for a in rep.get("autofix", [])]
+    if (rep["status"] != "ok" or rep.get("autofix")) and (hint := log_hint()):
         lines.append(hint)
     return "\n".join(lines)
 
@@ -1460,6 +1563,8 @@ def status() -> int:
             print(f"    failed {k}: {v[:200]}")
         for w in (r.get("warnings") or [])[:5]:
             print(f"    warning: {w[:200]}")
+        for a in r.get("autofix") or []:
+            print(f"    auto-fix: {a[:200]}")
     print(copy_line())
     if (cl := campaign_line()):
         print(cl)
