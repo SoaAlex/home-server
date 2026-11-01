@@ -52,6 +52,14 @@ chunker parameters (created with `nas-backup offsite-init`).
   400 MiB and start again only above 900 MiB; they run with `--cpu-shares 256`, a 1 GB cap and
   `GOMEMLIMIT=400MiB`. restic's temporary pack files go to `/volume2/@nas-backup/tmp` (RAID) for every job,
   never to the container layer on the SSD.
+- **Self-repair:** every step (nightly except the Google Drive copy, weekly, monthly after the data upload) runs
+  up to 3 times. Between two runs (`attempt()`): a restic lock refused -> `restic unlock` of the stale locks
+  (never `--remove-all`: a lock not refreshed for 30 min is dead, a running restic refreshes its own every
+  5 min), then again at once; a container killed (earlyoom) -> wait for free memory, again; anything else ->
+  again after 5 min. Never retried: a damaged repository, a wrong password, a timeout, a dead Google token.
+  The nightly and weekly jobs also sweep stale locks before starting, the monthly before its retention step:
+  a killed run's lock (restic runs as PID 1 in its container, so it cannot tell its owner is dead) blocked
+  the weekly prune and check on 2026-11-01. What was fixed shows in the recaps (🔧) and in `nas-backup status`.
 
 ## Where
 
