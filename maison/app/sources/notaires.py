@@ -25,7 +25,7 @@ def parse(payload, crit) -> list[dict]:
             description=text, price=a.get("prixTotal") or a.get("prixAffiche"),
             surface_m2=a.get("surface"), land_m2=a.get("surfaceTerrain"),
             rooms=a.get("nbPieces"), bedrooms=a.get("nbChambres"),
-            property_type=tp.detect_type(text), city=city,
+            **tp.type_fields(text), city=city,
             postal_code=a.get("codePostal"), insee=a.get("inseeCommune"),
             has_garage=tp.tri_garage(text), has_garden=tp.tri_garden(text),
             has_bathtub=tp.tri_bathtub(text), works=tp.detect_works(text),

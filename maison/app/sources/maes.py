@@ -56,7 +56,7 @@ def parse_detail(html: str) -> dict:
         description=t[:6000],
         has_garage=(garage_field.group(1).lower() == "oui") if garage_field else tp.tri_garage(t),
         has_garden=(garden_field.group(1).lower() == "oui") if garden_field else tp.tri_garden(t),
-        has_bathtub=tp.tri_bathtub(t), works=tp.detect_works(t), property_type=tp.detect_type(t),
+        has_bathtub=tp.tri_bathtub(t), works=tp.detect_works(t), **tp.type_fields(t),
         sale_status=status.group(1).title() if status else None,
         photo_urls=list(dict.fromkeys(x for x in imgs if "wp-content/uploads" in x)))
 

@@ -224,3 +224,265 @@ def test_merge_two_designated_listings_and_unknown_id(client, dburl):
     assert client.post(f"/api/listings/{a}/merge", json={"other_id": 999999}).status_code == 404
     r = client.post(f"/api/listings/{b}/merge", json={"other_id": a})
     assert r.status_code == 200 and {x["id"] for x in client.get("/api/listings").json()} & {a, b} == {r.json()["principal"]}
+
+
+def test_adjacency_tool_requires_token_and_writes_nothing(client, dburl, monkeypatch):
+    from app import adjacency
+    from tests.adjacency_helpers import building, house, plot, scene
+    seen = []
+
+    def fetch(c, point, address=None):
+        seen.append((point, address))
+        return scene([house(), building("R", 6, 0, 12, 9)], plot() + plot("PR", 6, 12))
+    monkeypatch.setattr(adjacency, "fetch", fetch)
+    assert client.get("/api/tools/adjacency?address=1+rue+de+l%27Exemple").status_code == 401
+    assert seen == []
+    with db.connect(dburl) as conn:
+        before = conn.execute("SELECT id, adjacency, enrichment, score FROM listing ORDER BY id").fetchall()
+    r = client.get("/api/tools/adjacency", params={"address": "1 rue de l'Exemple"}, headers={"X-Token": "tok"})
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert {"status", "type", "usable", "warnings", "target", "neighbours", "living_walls", "annex_links",
+            "orientation", "input", "computed_at"} <= set(res) and "geometry" not in res
+    assert res["type"] == "semi" and res["neighbours"][0]["side"] == "right"
+    g = client.get("/api/tools/adjacency", params={"lon": -5.0, "lat": 46.0, "geometry": 1},
+                   headers={"X-Token": "tok"}).json()
+    assert g["geometry"]["type"] == "FeatureCollection" and seen[-1] == ((-5.0, 46.0), None)
+    assert client.get("/api/tools/adjacency", headers={"X-Token": "tok"}).status_code == 400
+    with db.connect(dburl) as conn:
+        after = conn.execute("SELECT id, adjacency, enrichment, score FROM listing ORDER BY id").fetchall()
+    assert after == before
+
+
+def test_adjacency_tool_outage_is_a_502(client, monkeypatch):
+    from app import adjacency
+
+    def fetch(c, point, address=None):
+        raise adjacency.FetchError("data.geopf.fr : HTTP 504")
+    monkeypatch.setattr(adjacency, "fetch", fetch)
+    r = client.get("/api/tools/adjacency", params={"lon": 3.1, "lat": 50.6}, headers={"X-Token": "tok"})
+    assert r.status_code == 502 and "504" in r.json()["detail"]
+
+    def unknown(c, point, address=None):
+        raise adjacency.AddressNotFound("adresse introuvable dans la BAN (numéro inconnu)")
+    monkeypatch.setattr(adjacency, "fetch", unknown)
+    r = client.get("/api/tools/adjacency", params={"address": "Place de l'Exemple"}, headers={"X-Token": "tok"})
+    assert r.status_code == 422 and "introuvable" in r.json()["detail"]
+
+
+def _wms_client(monkeypatch, calls):
+    """httpx simulé pour les routes web : le WMS de l'IGN renvoie une image grise unie."""
+    import io
+    import httpx
+    from PIL import Image
+    from app import web
+    buf = io.BytesIO()
+    Image.new("RGB", (700, 700), (128, 128, 128)).save(buf, "JPEG")
+    real = httpx.Client
+
+    def handler(req):
+        calls.append(req)
+        assert req.url.host == "data.geopf.fr" and req.url.params["LAYERS"] == "ORTHOIMAGERY.ORTHOPHOTOS"
+        return httpx.Response(200, content=buf.getvalue(), headers={"content-type": "image/jpeg"})
+    monkeypatch.setattr(web.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler)))
+
+
+def test_aerial_view_of_a_listing_is_drawn_and_cached(client, dburl, monkeypatch, tmp_path):
+    import io
+    from PIL import Image
+    from app import adjacency
+    from tests.adjacency_helpers import building, house, ll, plot, scene
+    monkeypatch.setattr(settings, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(adjacency, "fetch", lambda c, point, address=None: scene(
+        [house(), building("R", 6, 0, 12, 9)], plot() + plot("PR", 6, 12)))
+    lon, lat = ll(3, -2)
+    with db.connect(dburl) as conn:
+        lid, _ = upsert(conn, dict(source="bienici", external_id="aerial", url="https://e/aerial", city="Wambrechies",
+                                   lat=lat, lon=lon, geo_precision="exact", address="1 rue de l'Exemple"))
+        conn.execute("""UPDATE listing SET enrichment='{"address_confidence": "exact"}' WHERE id=%s""", (lid,))
+        adjacency.process(conn, None)
+    calls = []
+    _wms_client(monkeypatch, calls)
+    assert client.get(f"/api/tools/aerial?listing_id={lid}").status_code == 401
+    r = client.get(f"/api/tools/aerial?listing_id={lid}", headers={"X-Token": "tok"})
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+    img = Image.open(io.BytesIO(r.content)).convert("RGB")
+    assert img.size == (700, 700)
+    r_, g_, b_ = img.getpixel((350, 350))                # vue centrée sur le bâtiment de l'annonce : bleu
+    assert b_ > r_ + 40 and b_ > g_ + 25
+    r_, g_, b_ = img.getpixel((410, 350))                # voisin accolé à 6 m à l'est : rouge
+    assert r_ > b_ + 40 and r_ > g_ + 40
+    lat0, lon0, lat1, lon1 = map(float, calls[0].url.params["BBOX"].split(","))
+    assert lat0 < lat1 and lon0 < lon1 and 69 < adjacency._dist_m(lon0, lat0, lon0, lat1) < 71
+    again = client.get(f"/api/tools/aerial?listing_id={lid}", headers={"X-Token": "tok"})
+    assert again.content == r.content and len(calls) == 1          # second appel servi par le cache
+    assert len(list((tmp_path / "aerial").glob(f"{lid}_*.jpg"))) == 1
+
+
+def test_aerial_view_not_applicable_for_a_city_position(client, dburl, monkeypatch, tmp_path):
+    from app import adjacency
+    monkeypatch.setattr(settings, "DATA_DIR", tmp_path)
+    calls = []
+    _wms_client(monkeypatch, calls)
+    with db.connect(dburl) as conn:
+        lid, _ = upsert(conn, dict(source="seloger", external_id="city", url="https://e/city", city="Wambrechies",
+                                   lat=50.68, lon=3.05, geo_precision="city"))
+        adjacency.process(conn, None)
+    r = client.get(f"/api/tools/aerial?listing_id={lid}", headers={"X-Token": "tok"})
+    assert r.status_code == 404 and "non applicable" in r.json()["detail"] and calls == []
+    assert client.get("/api/tools/aerial?listing_id=999999", headers={"X-Token": "tok"}).status_code == 404
+
+
+def test_type_info_in_list_fiche_and_pending(client, dburl):
+    from psycopg.types.json import Jsonb
+    adj = {"v": 1, "status": "ok", "type": "terraced", "usable": True, "warnings": [], "input": {"confidence": "exact"},
+           "neighbours": [{"kind": "living", "length_m": 9.0, "side": "left"}, {"kind": "living", "length_m": 8.0,
+                                                                              "side": "right"}],
+           "geometry": {"type": "FeatureCollection", "features": []}}
+    with db.connect(dburl) as conn:
+        lid = conn.execute("SELECT id FROM listing WHERE external_id='a'").fetchone()["id"]
+        conn.execute("UPDATE listing SET adjacency=%s, property_type='detached', property_type_src='text_explicit', "
+                     "description='Maison individuelle' WHERE id=%s", (Jsonb(adj), lid))
+    item = next(x for x in client.get("/api/listings").json() if x["id"] == lid)
+    assert item["type_info"]["type"] == "terraced" and item["type_info"]["source"] == "map"
+    assert item["type_info"]["disagreement"] is True and "description" not in item
+    assert item["adjacency"]["status"] == "ok" and "geometry" not in item["adjacency"]
+    listing = next(v for v in item["type_info"]["verdicts"] if v["source"] == "listing")
+    assert listing["detail"] == "« individuelle »" and listing["disagrees"]
+    fiche = client.get(f"/api/listings/{lid}").json()
+    assert fiche["adjacency"]["geometry"]["type"] == "FeatureCollection"
+    assert fiche["type_info"]["summary"] == "Mitoyenne · carte (2 murs : 9 m, 8 m)"
+    pend = client.get("/api/enrichment/pending", headers={"X-Token": "tok"}).json()
+    p = next(x for x in pend if x["id"] == lid)
+    assert p["type_info"]["type"] == "terraced" and "geometry" not in p["adjacency"]
+
+
+def test_user_type_correction_rescores_and_resists_the_agent(client, dburl):
+    with db.connect(dburl) as conn:
+        lid = conn.execute("SELECT id FROM listing WHERE external_id='a'").fetchone()["id"]
+        conn.execute("UPDATE listing SET property_type='semi', property_type_src='structured' WHERE id=%s", (lid,))
+    first = client.post(f"/api/listings/{lid}/property_type", json={"type": "semi"}).json()
+    r = client.post(f"/api/listings/{lid}/property_type", json={"type": "link_detached"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["type_info"]["type"] == "link_detached" and body["type_info"]["source"] == "user"
+    assert body["score"] == first["score"] + 3 and body["score_details"]["type"] == 10
+    ev = {"left": "house", "right": "house", "seen_on": ["street_view"], "photos": [], "notes": ""}
+    client.post(f"/api/listings/{lid}/enrichment", headers={"X-Token": "tok"},
+                json={"property_type": "terraced", "type_evidence": ev, "property_type_user": "detached"})
+    fiche = client.get(f"/api/listings/{lid}").json()
+    assert fiche["type_info"]["type"] == "link_detached" and fiche["enrichment"]["property_type_user"] == "link_detached"
+    agent = next(v for v in fiche["type_info"]["verdicts"] if v["source"] == "agent")
+    assert agent["type"] == "terraced" and agent["disagrees"]            # gardé comme preuve
+    auto = client.post(f"/api/listings/{lid}/property_type", json={"type": None}).json()
+    assert auto["type_info"]["type"] == "terraced" and auto["type_info"]["source"] == "agent"
+    assert "property_type_user" not in client.get(f"/api/listings/{lid}").json()["enrichment"]
+    assert client.post(f"/api/listings/{lid}/property_type", json={"type": "maison mitoyenne"}).status_code == 400
+    assert client.post("/api/listings/999999/property_type", json={"type": "semi"}).status_code == 404
+
+
+# ---------- file des vérifications de type (spec photo-adjacency-review) ----------
+EV = {"left": "house", "right": "garage", "seen_on": ["street_view"], "photos": [1], "notes": "garage accolé à droite"}
+
+
+def _row(dburl, lid):
+    with db.connect(dburl) as conn:
+        return conn.execute("SELECT enrichment, enrichment_status, enriched_at FROM listing WHERE id=%s",
+                            (lid,)).fetchone()
+
+
+def _enriched(dburl):
+    with db.connect(dburl) as conn:
+        lid = conn.execute("SELECT id FROM listing WHERE external_id='a'").fetchone()["id"]
+        conn.execute("""UPDATE listing SET enrichment_status='done', enriched_at=now() - interval '3 days',
+                        enrichment='{"summary_fr": "résumé", "property_type": "terraced"}' WHERE id=%s""", (lid,))
+    return lid
+
+
+def test_type_request_is_queued_apart_from_the_standard_queue(client, dburl):
+    lid = _enriched(dburl)
+    r = client.post(f"/api/listings/{lid}/type_request", json={"note": "le garage relie-t-il au voisin ?"})
+    assert r.status_code == 200 and r.json()["type_request"]["reason"] == "user"
+    assert client.get("/api/enrichment/type_checks").status_code == 401
+    queue = client.get("/api/enrichment/type_checks", headers={"X-Token": "tok"}).json()
+    assert [x["id"] for x in queue] == [lid] and queue[0]["type_info"]["type"] == "terraced"
+    assert lid not in {x["id"] for x in client.get("/api/enrichment/pending", headers={"X-Token": "tok"}).json()}
+    assert _row(dburl, lid)["enrichment_status"] == "done"
+    fiche = client.get(f"/api/listings/{lid}").json()
+    assert fiche["enrichment"]["type_request"]["note"] == "le garage relie-t-il au voisin ?"
+
+
+def test_type_check_verdict_moves_the_request_to_history_without_touching_status(client, dburl):
+    lid = _enriched(dburl)
+    client.post(f"/api/listings/{lid}/type_request", json={})
+    before = _row(dburl, lid)
+    r = client.post(f"/api/listings/{lid}/enrichment", headers={"X-Token": "tok"},
+                    json={"_type_check": True, "property_type": "semi", "type_evidence": EV, "summary_fr": "écrasé ?"})
+    assert r.status_code == 200, r.text
+    after = _row(dburl, lid)
+    enr = after["enrichment"]
+    assert "type_request" not in enr and enr["property_type"] == "semi" and enr["type_evidence"] == EV
+    assert enr["summary_fr"] == "résumé"                              # seuls les champs du type sont fusionnés
+    [h] = enr["type_checks"]
+    assert (h["reason"], h["verdict"], h["notes"], h["sides"]) == ("user", "semi", "garage accolé à droite",
+                                                                   ["house", "garage"]) and h["done_at"]
+    assert (after["enrichment_status"], after["enriched_at"]) == (before["enrichment_status"], before["enriched_at"])
+    assert client.get("/api/enrichment/type_checks", headers={"X-Token": "tok"}).json() == []
+
+
+def test_standard_enrichment_with_evidence_settles_a_pending_request(client, dburl):
+    lid = _enriched(dburl)
+    client.post(f"/api/listings/{lid}/type_request", json={})
+    r = client.post(f"/api/listings/{lid}/enrichment", headers={"X-Token": "tok"},
+                    json={"summary_fr": "nouveau", "property_type": "semi", "type_evidence": EV})
+    assert r.status_code == 200
+    enr = _row(dburl, lid)["enrichment"]
+    assert "type_request" not in enr and enr["type_checks"][0]["verdict"] == "semi"
+    client.post(f"/api/listings/{lid}/type_request", json={})
+    client.post(f"/api/listings/{lid}/enrichment", headers={"X-Token": "tok"}, json={"summary_fr": "sans preuves"})
+    assert "type_request" in _row(dburl, lid)["enrichment"]             # pas de preuves : la demande reste
+
+
+def test_type_check_queue_order(client, dburl):
+    with db.connect(dburl) as conn:
+        ids = [conn.execute("SELECT id FROM listing WHERE external_id=%s", (e,)).fetchone()["id"] for e in ("a", "c")]
+        conn.execute("UPDATE listing SET excluded_reason=NULL, score=CASE WHEN external_id='a' THEN 60 ELSE 80 END "
+                     "WHERE id = ANY(%s)", (ids,))
+    for lid in ids:
+        client.post(f"/api/listings/{lid}/type_request", json={})
+    queue = client.get("/api/enrichment/type_checks", headers={"X-Token": "tok"}).json()
+    assert [x["id"] for x in queue] == [ids[1], ids[0]]                   # meilleur score d'abord
+
+
+def test_contact_sheet_numbers_up_to_12_local_photos(client, dburl, monkeypatch, tmp_path):
+    import io
+    from PIL import Image
+    from psycopg.types.json import Jsonb
+    from tests.dedupe_helpers import jpeg, scene
+    monkeypatch.setattr(settings, "DATA_DIR", tmp_path)
+    with db.connect(dburl) as conn:
+        lid = conn.execute("SELECT id FROM listing WHERE external_id='a'").fetchone()["id"]
+        rels = []
+        for i in range(10):
+            f = tmp_path / "photos" / str(lid) / f"{i:02d}.jpg"
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(jpeg(scene(i + 1)))
+            rels.append(f"{lid}/{i:02d}.jpg")
+        conn.execute("UPDATE listing SET photos=%s WHERE id=%s", (Jsonb(rels), lid))
+        other = conn.execute("SELECT id FROM listing WHERE external_id='c'").fetchone()["id"]
+    assert client.get(f"/api/listings/{lid}/contact_sheet.jpg").status_code == 401
+    r = client.get(f"/api/listings/{lid}/contact_sheet.jpg", headers={"X-Token": "tok"})
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+    img = Image.open(io.BytesIO(r.content)).convert("RGB")
+    assert img.size == (960, 540)                                     # 10 vignettes : 4 colonnes, 3 rangées
+    filled = [img.crop((x * 240 + 60, y * 180 + 60, x * 240 + 180, y * 180 + 150)).convert("L").getextrema()[1] > 0
+              for y in range(3) for x in range(4)]
+    assert filled == [True] * 10 + [False] * 2
+    r_, g_, b_ = img.getpixel((4, 4))                                  # étiquette du numéro (jaune)
+    assert r_ > 200 and g_ > 180 and b_ < 80
+    with db.connect(dburl) as conn:
+        conn.execute("UPDATE listing SET photos=%s WHERE id=%s", (Jsonb(rels + [f"{lid}/x{i}.jpg" for i in range(5)]), lid))
+    assert Image.open(io.BytesIO(client.get(f"/api/listings/{lid}/contact_sheet.jpg",
+                                            headers={"X-Token": "tok"}).content)).size == (960, 540)   # 12 au plus
+    nophoto = client.get(f"/api/listings/{other}/contact_sheet.jpg", headers={"X-Token": "tok"})
+    assert nophoto.status_code == 404 and "aucune photo locale" in nophoto.json()["detail"]

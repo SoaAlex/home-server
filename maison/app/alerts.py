@@ -1,5 +1,5 @@
 from app import settings
-from app.scoring import effective
+from app.scoring import SOURCE_LABELS as TYPE_SOURCES, effective, resolve_type
 
 
 def should_alert(row: dict, crit: dict) -> bool:
@@ -34,6 +34,7 @@ def best_url(row: dict) -> str:
 
 def build_embed(row: dict, crit: dict | None = None) -> dict:
     r = effective(row)
+    t = resolve_type(row)
     c = r.get("commute") or {}
     dests = (crit or {}).get("commute", {}).get("destinations", {})
     trips = " · ".join(f"{dests.get(k, {}).get('short', k)} {v} min"
@@ -41,6 +42,7 @@ def build_embed(row: dict, crit: dict | None = None) -> dict:
     fields = [{"name": k, "value": str(v), "inline": True} for k, v in [
         ("Prix", _fmt_price(r.get("price"))), ("Ville", r.get("city") or "?"),
         ("Surface", f"{r.get('surface_m2') or '?'} m²"), ("Terrain", f"{r.get('land_m2') or '?'} m²"),
+        ("Type", t["label"] + (f" ({TYPE_SOURCES[t['source']]})" if t["source"] else "")),
         ("DPE", r.get("dpe") or "?"), ("Trajets", trips)]]
     offers = (row.get("cluster") or {}).get("offers") or []
     if len(offers) > 1:

@@ -80,3 +80,87 @@ def test_members_never_alert():
     row = {"id": 5, "score": 90, "price": 300000, "status": "active", "merged_into": 4}
     assert not alerts.should_alert(row, crit)
     assert alerts.should_alert({**row, "merged_into": None}, crit)
+
+
+def test_embed_shows_retained_type_and_its_source():
+    adj = {"status": "ok", "type": "link_detached", "usable": True, "warnings": [], "input": {"confidence": "exact"},
+           "neighbours": [{"kind": "annex_link", "length_m": 6.0, "side": "right"}]}
+    e = alerts.build_embed(row(property_type="semi", property_type_src="text_weak", adjacency=adj),
+                           {"commute": {"destinations": {}}})
+    f = {x["name"]: x["value"] for x in e["fields"]}
+    assert f["Type"] == "Accolée par le garage (carte)"
+    assert {x["name"]: x["value"] for x in alerts.build_embed(row(), {})["fields"]}["Type"] == "Inconnu"
+
+
+# ---------- contrôle des champs du type envoyés par l'agent (spec photo-adjacency-review) ----------
+import pytest  # noqa: E402
+from app.scoring import check_type_fields, type_from_sides  # noqa: E402
+
+EV = {"left": "house", "right": "free", "seen_on": ["listing_photos"], "photos": [0, 2], "notes": "pignon droit vitré"}
+
+
+@pytest.fixture
+def api(dburl, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app import db, settings, web
+    from app.ingest import upsert
+    monkeypatch.setattr(settings, "DATABASE_URL", dburl)
+    monkeypatch.setattr(settings, "ENRICH_TOKEN", "tok")
+    monkeypatch.setattr(settings, "DISCORD_WEBHOOK_URL", "")
+    monkeypatch.setattr(web, "postprocess", lambda *a, **k: None)
+    with db.connect(dburl) as conn:
+        lid, _ = upsert(conn, dict(source="bienici", external_id="t", url="https://e/t", price=300000,
+                                   city="Wambrechies", has_garage=True, has_garden=True))
+        conn.execute("""UPDATE listing SET enrichment='{"summary_fr": "avant"}' WHERE id=%s""", (lid,))
+    with TestClient(web.app) as c:
+        c.lid, c.dburl = lid, dburl
+        yield c
+
+
+def _enrichment(api):
+    from app import db
+    with db.connect(api.dburl) as conn:
+        return conn.execute("SELECT enrichment, enrichment_status FROM listing WHERE id=%s", (api.lid,)).fetchone()
+
+
+def test_prose_property_type_is_refused_and_nothing_is_written(api):
+    before = _enrichment(api)
+    r = api.post(f"/api/listings/{api.lid}/enrichment", headers={"X-Token": "tok"},
+                 json={"property_type": "Maison mitoyenne", "summary_fr": "après"})
+    assert r.status_code == 422 and "detached | link_detached | semi | terraced" in r.json()["detail"]
+    assert _enrichment(api) == before
+
+
+def test_valid_output_is_recorded_and_retained(api):
+    r = api.post(f"/api/listings/{api.lid}/enrichment", headers={"X-Token": "tok"},
+                 json={"property_type": "semi", "type_evidence": EV})
+    assert r.status_code == 200, r.text
+    enr = _enrichment(api)["enrichment"]
+    assert enr["property_type"] == "semi" and enr["type_evidence"] == EV
+    t = api.get(f"/api/listings/{api.lid}").json()["type_info"]
+    assert (t["type"], t["source"], t["confidence"]) == ("semi", "agent", "high")
+
+
+def test_terraced_with_a_free_side_is_refused_citing_semi(api):
+    r = api.post(f"/api/listings/{api.lid}/enrichment", headers={"X-Token": "tok"},
+                 json={"property_type": "terraced", "type_evidence": EV})
+    assert r.status_code == 422 and "'semi'" in r.json()["detail"]
+
+
+def test_an_unknown_side_is_accepted(api):
+    r = api.post(f"/api/listings/{api.lid}/enrichment", headers={"X-Token": "tok"},
+                 json={"property_type": "semi", "type_evidence": {**EV, "right": "unknown"}})
+    assert r.status_code == 200
+
+
+def test_evidence_schema():
+    assert check_type_fields({}) is None and check_type_fields({"property_type": None}) is None
+    assert "unknown" in check_type_fields({"property_type": "unknown"})       # ne pas envoyer de type
+    assert "clés inconnues" in check_type_fields({"type_evidence": {**EV, "verdict": "x"}})
+    assert "left" in check_type_fields({"type_evidence": {**EV, "left": "mur"}})
+    assert "seen_on" in check_type_fields({"type_evidence": {**EV, "seen_on": ["google"]}})
+    assert "photos" in check_type_fields({"type_evidence": {**EV, "photos": ["3"]}})
+    assert "300" in check_type_fields({"type_evidence": {**EV, "notes": "x" * 301}})
+    assert [type_from_sides(*s) for s in (("house", "house"), ("house", "garage"), ("garage", "free"),
+                                          ("annex", "garage"), ("free", "free"), ("house", "unknown"))] == \
+        ["terraced", "semi", "link_detached", "link_detached", "detached", None]

@@ -45,7 +45,9 @@ LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('maison-dedupe'))"
 SCOPE_SQL = f"(status = 'active' OR last_seen > now() - interval '{SCOPE_GONE_DAYS} days')"
 FILL_FIELDS = ("city", "postal_code", "insee", "surface_m2", "land_m2", "rooms", "bedrooms", "dpe", "ges",
                "dpe_value", "dpe_date", "year_built", "has_garage", "has_garden", "has_bathtub",
-               "property_type", "works", "address")
+               "works", "address")     # property_type : verdicts des secondaires à part (_listing_type, _agent_type)
+TYPES = ("detached", "link_detached", "semi", "terraced")         # « unknown » compte comme vide
+TYPE_SRC_RANK = {"structured": 0, "text_explicit": 1, "text_weak": 2}
 PRECISION = {"exact": 3, "approx": 2, "city": 1}
 _MASK = (1 << 64) - 1
 
@@ -739,6 +741,23 @@ def _history(r: dict, price) -> list[dict]:
     return pts
 
 
+def _listing_type(r: dict) -> dict | None:
+    """Verdict « annonce » d'une source : champ structuré, puis texte explicite, puis texte faible."""
+    if r.get("property_type") not in TYPES:
+        return None
+    src = r.get("property_type_src")
+    return {"type": r["property_type"], "src": src, "rank": TYPE_SRC_RANK.get(src, 3), "id": r["id"]}
+
+
+def _agent_type(r: dict) -> dict | None:
+    """Verdict de l'agent sur une source : avec preuves (nouveau protocole), puis sans."""
+    enr = r.get("enrichment") or {}
+    if enr.get("property_type") not in TYPES:
+        return None
+    ev = enr.get("type_evidence") if isinstance(enr.get("type_evidence"), dict) else None
+    return {"type": enr["property_type"], "evidence": ev, "rank": 0 if ev else 1, "id": r["id"]}
+
+
 def build_cluster(p: dict, members: list[dict], hashes: dict[int, dict], now: datetime | None = None) -> dict | None:
     """Vue matérialisée d'un groupe (design D2). `hashes` = {listing_id: {chemin relatif: (pHash, dHash)}}."""
     if not members:
@@ -762,6 +781,14 @@ def build_cluster(p: dict, members: list[dict], hashes: dict[int, dict], now: da
             v = next((_own(m, k) for m in ordered if _own(m, k) is not None), None)
             if v is not None:
                 fill[k] = _js(v)
+    if not _listing_type(p):        # type d'annonce absent ou « unknown » : meilleur verdict des autres sources
+        lt = min(filter(None, map(_listing_type, ordered)), key=lambda v: v["rank"], default=None)
+        if lt:
+            fill.update(property_type=lt["type"], property_type_src=lt["src"], property_type_from=lt["id"])
+    if not _agent_type(p):
+        at = min(filter(None, map(_agent_type, ordered)), key=lambda v: v["rank"], default=None)
+        if at:
+            fill["agent_type"] = {"type": at["type"], "evidence": at["evidence"], "from": at["id"]}
     if p.get("lat") is None or p.get("geo_precision") in (None, "city"):
         mine = PRECISION.get(p.get("geo_precision"), 0) if p.get("lat") is not None else 0
         cands = [m for m in ordered if m.get("lat") is not None and PRECISION.get(m.get("geo_precision"), 0) > mine]
@@ -809,7 +836,8 @@ def build_cluster(p: dict, members: list[dict], hashes: dict[int, dict], now: da
 
 
 CLUSTER_COLS = ("id, source, url, title, price, surface_m2, land_m2, rooms, bedrooms, city, postal_code, insee, dpe, "
-                "ges, dpe_value, dpe_date, year_built, has_garage, has_garden, has_bathtub, property_type, works, "
+                "ges, dpe_value, dpe_date, year_built, has_garage, has_garden, has_bathtub, property_type, "
+                "property_type_src, works, "
                 "address, lat, lon, geo_precision, commute, agency, status, first_seen, last_seen, price_history, "
                 "photos, photo_urls, enrichment, enrichment_status, merged_into")
 

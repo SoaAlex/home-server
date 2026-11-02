@@ -49,6 +49,20 @@ def test_source_address_is_ingested_but_user_address_stays_locked(dburl):
     assert row["address"] == "218 Rue du Château Valois, 59118 Wambrechies"
 
 
+def test_type_provenance_follows_type(dburl):
+    with db.connect(dburl) as conn:
+        lid, _ = upsert(conn, L(property_type="semi", property_type_src="text_explicit"))
+        upsert(conn, L(property_type=None, property_type_src=None))           # fiche partielle : rien ne change
+        row = conn.execute("SELECT property_type, property_type_src FROM listing WHERE id=%s", (lid,)).fetchone()
+        assert (row["property_type"], row["property_type_src"]) == ("semi", "text_explicit")
+        upsert(conn, L(property_type="unknown", property_type_src=None))      # nouveau texte sans indice
+        row = conn.execute("SELECT property_type, property_type_src FROM listing WHERE id=%s", (lid,)).fetchone()
+        assert (row["property_type"], row["property_type_src"]) == ("unknown", None)
+        upsert(conn, L(property_type="terraced", property_type_src="structured"))
+        row = conn.execute("SELECT property_type, property_type_src FROM listing WHERE id=%s", (lid,)).fetchone()
+    assert (row["property_type"], row["property_type_src"]) == ("terraced", "structured")
+
+
 def test_mark_gone(dburl):
     with db.connect(dburl) as conn:
         upsert(conn, L())

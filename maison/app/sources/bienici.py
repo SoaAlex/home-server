@@ -48,7 +48,7 @@ def parse(payload: dict) -> list[dict]:
             price=int(ad["price"]) if isinstance(ad.get("price"), (int, float)) else None,
             surface_m2=_scalar(ad.get("surfaceArea")), land_m2=_scalar(ad.get("landSurfaceArea")),
             rooms=_scalar(ad.get("roomsQuantity")), bedrooms=_scalar(ad.get("bedroomsQuantity")),
-            property_type=tp.detect_type(text), city=ad.get("city"), postal_code=ad.get("postalCode"),
+            **tp.type_fields(text), city=ad.get("city"), postal_code=ad.get("postalCode"),
             dpe=_cls(ad.get("energyClassification")), ges=_cls(ad.get("greenhouseGazClassification")),
             dpe_value=int(ad["energyValue"]) if isinstance(ad.get("energyValue"), (int, float)) else None,
             dpe_date=dpe_date, year_built=ad.get("yearOfConstruction"),

@@ -98,7 +98,7 @@ def parse_card(text: str, cities=()) -> dict:
         d["has_garden"] = True
     if re.search(r"\bgarage\b", n):
         d["has_garage"] = True
-    d["property_type"] = tp.detect_type(text)
+    d.update(tp.type_fields(text))
     return d
 
 
