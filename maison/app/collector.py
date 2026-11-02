@@ -7,7 +7,7 @@ import traceback
 from datetime import datetime
 import httpx
 from psycopg.types.json import Jsonb
-from app import db, settings, geo, photos, alerts, dedupe
+from app import db, settings, geo, photos, alerts, dedupe, adjacency
 from app.ingest import upsert, mark_gone
 from app.scoring import score_listing
 from app.sources import bienici, notaires, maes, netty, agences, pap, email_alerts
@@ -163,6 +163,13 @@ def run_once():
         except Exception:
             conn.rollback()
             log.error("doublons en échec\n%s", traceback.format_exc())
+        try:        # mitoyenneté cartographique : après les fusions (position du bien), avant le score
+            st = adjacency.process(conn, client)
+            log.info("mitoyenneté : %d calculées, %d échecs, %d en attente", st["computed"], st["errors"],
+                     st["pending"])
+        except Exception:
+            conn.rollback()
+            log.error("mitoyenneté en échec\n%s", traceback.format_exc())
         sent = rescore(conn, client, crit)
         conn.commit()
         log.info("alertes envoyées: %d", sent)

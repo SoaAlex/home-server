@@ -1,6 +1,7 @@
 import os
 from email.message import EmailMessage
 import pytest
+from app.sources import email_alerts
 from app.sources.email_alerts import parse_message, make_resolver, _match
 
 FIX = "tests/fixtures/"
@@ -132,3 +133,10 @@ def test_seloger_two_ads_of_the_same_long_city_stay_distinct():
     assert [(i["external_id"], i["price"]) for i in items] == [("2645ZUHMDZ7I", 389000), ("26AB12CD34EF", 459000)]
     assert items[0]["url"].endswith("/lambersart-59130/2645ZUHMDZ7I") and items[0]["surface_m2"] == 80
     assert items[1]["surface_m2"] == 113 and items[1]["city"] == "Lambersart"
+
+
+def test_card_type_and_provenance():
+    d = email_alerts.parse_card("Maison semi-mitoyenne 4 pièces · 91 m² · 300 000 € · Croix (59170)", cities=["Croix"])
+    assert (d["property_type"], d["property_type_src"]) == ("semi", "text_explicit")
+    d = email_alerts.parse_card("Maison 4 pièces, cuisine indépendante · 300 000 € · Croix (59170)", cities=["Croix"])
+    assert (d["property_type"], d["property_type_src"]) == ("unknown", None)

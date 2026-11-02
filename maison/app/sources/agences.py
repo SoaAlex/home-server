@@ -55,7 +55,7 @@ def _dpe(t: str):
 
 def _flags(text: str) -> dict:
     return dict(has_garage=tp.tri_garage(text), has_garden=tp.tri_garden(text), has_bathtub=tp.tri_bathtub(text),
-                works=tp.detect_works(text), property_type=tp.detect_type(text))
+                works=tp.detect_works(text), **tp.type_fields(text))
 
 
 # ---------- Référence Immobilière ----------

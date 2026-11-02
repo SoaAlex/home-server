@@ -144,3 +144,28 @@ def test_cluster_price_beats_principal_agent_price_only_when_lower_offer_exists(
     p = row(1, price=500000, enrichment={"price": 480000}, city="Wambrechies")
     c = cluster(p, row(2, source="seloger", price=490000))
     assert effective({**p, "cluster": c})["price"] == 480000
+
+
+def test_unknown_principal_type_does_not_hide_a_secondary_verdict():
+    from app.scoring import type_info
+    p = row(1, source="seloger", property_type="unknown", property_type_src=None)
+    c = cluster(p, row(2, source="netty", property_type="semi", property_type_src="structured"),
+                row(3, source="pap", property_type="terraced", property_type_src="text_weak"))
+    assert (c["fill"]["property_type"], c["fill"]["property_type_src"], c["fill"]["property_type_from"]) == \
+        ("semi", "structured", 2)
+    t = type_info({**p, "cluster": c})
+    assert (t["type"], t["source"]) == ("semi", "listing")
+    assert t["verdicts"][0]["detail"] == "champ structuré — annonce #2 du même bien"
+    assert "agent_type" not in merged_columns({**p, "cluster": c})
+
+
+def test_agent_verdict_of_a_secondary_counts_when_the_principal_has_none():
+    from app.scoring import resolve_type
+    ev = {"left": "house", "right": "free", "seen_on": ["street_view"], "photos": [], "notes": ""}
+    p = row(1, source="seloger", property_type="unknown")
+    c = cluster(p, row(2, source="bienici", enrichment={"property_type": "terraced"}),
+                row(3, source="netty", enrichment={"property_type": "semi", "type_evidence": ev}))
+    assert c["fill"]["agent_type"] == {"type": "semi", "evidence": ev, "from": 3}
+    assert resolve_type({**p, "cluster": c})["type"] == "semi"
+    own = row(1, source="seloger", enrichment={"property_type": "detached"})
+    assert "agent_type" not in cluster(own, row(3, source="netty", enrichment={"property_type": "semi"}))["fill"]

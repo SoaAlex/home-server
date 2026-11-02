@@ -36,7 +36,7 @@ def test_parse_detail():
     assert d["dpe"] == "E" and d["land_m2"] == 120
     assert d["has_garage"] and d["has_garden"] and len(d["photo_urls"]) >= 8
     assert d["description"].startswith("Maison de ville sur 2 étages")
-    assert d["property_type"] in ("terraced", "semi", "detached", "unknown")
+    assert d["property_type"] == "terraced" and d["property_type_src"] == "text_weak"    # « Maison de ville »
 
 
 class Resp:

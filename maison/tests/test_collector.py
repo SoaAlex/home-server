@@ -183,3 +183,172 @@ def test_dedupe_step_skipped_until_initial_analysis_applied(dburl, monkeypatch, 
     with caplog.at_level(logging.WARNING, logger="collector"):
         collector.run_once()
     assert any("étape ignorée" in r.message for r in caplog.records)
+
+
+# ---------- mitoyenneté cartographique (spec building-adjacency) ----------
+def _adj_listing(conn, ext, geo_precision="exact", address="1 rue de l'Exemple", confidence="exact", **kw):
+    from psycopg.types.json import Jsonb
+    from tests.adjacency_helpers import ll
+    lon, lat = ll(3, -2)
+    item = {"source": "bienici", "external_id": ext, "url": f"https://www.bienici.com/annonce/{ext}", "title": "Maison",
+            "price": 300000, "city": "Wambrechies", "postal_code": "59118", "insee": "59636", "lat": lat, "lon": lon,
+            "geo_precision": geo_precision, "address": address, "has_garage": True, "has_garden": True, **kw}
+    lid, _ = ingest.upsert(conn, item)
+    if confidence:
+        conn.execute("UPDATE listing SET enrichment = enrichment || %s WHERE id=%s",
+                     (Jsonb({"address_confidence": confidence}), lid))
+    return lid
+
+
+def _fake_fetch(monkeypatch, calls, error=None):
+    from app import adjacency
+    from tests.adjacency_helpers import building, house, plot, scene
+
+    def fetch(client, point, address=None):
+        calls.append((point, address))
+        if error:
+            raise adjacency.FetchError(error)
+        return scene([house(), building("L", -6, 0, 0, 9), building("R", 6, 0, 12, 8)],
+                     plot() + plot("PL", -6, 0) + plot("PR", 6, 12))
+    monkeypatch.setattr(adjacency, "fetch", fetch)
+
+
+def _adj(conn, lid):
+    return conn.execute("SELECT adjacency FROM listing WHERE id=%s", (lid,)).fetchone()["adjacency"]
+
+
+def test_adjacency_computed_for_an_exact_address(dburl, monkeypatch):
+    from app import adjacency
+    calls = []
+    _fake_fetch(monkeypatch, calls)
+    with db.connect(dburl) as conn:
+        lid = _adj_listing(conn, "adj-exact")
+        st = adjacency.process(conn, None)
+        a = _adj(conn, lid)
+    assert st == {"computed": 1, "errors": 0, "pending": 0, "not_applicable": 0}
+    assert a["status"] == "ok" and a["type"] == "terraced" and a["computed_at"]
+    assert a["input"]["confidence"] == "exact" and a["input"]["address"] == "1 rue de l'Exemple"
+    assert len(calls) == 1
+
+
+def test_city_and_street_positions_are_not_applicable(dburl, monkeypatch):
+    from app import adjacency
+    calls = []
+    _fake_fetch(monkeypatch, calls)
+    with db.connect(dburl) as conn:
+        city = _adj_listing(conn, "adj-city", geo_precision="city", address=None, confidence=None)
+        street = _adj_listing(conn, "adj-street", geo_precision="approx", confidence="street")
+        number_unsure = _adj_listing(conn, "adj-none", confidence="none")
+        st = adjacency.process(conn, None)
+        res = {k: _adj(conn, i) for k, i in (("city", city), ("street", street), ("none", number_unsure))}
+    assert calls == [] and st["not_applicable"] == 3
+    assert {k: (v["status"], v["reason"]) for k, v in res.items()} == {
+        "city": ("not_applicable", "imprecise_position"), "street": ("not_applicable", "imprecise_position"),
+        "none": ("not_applicable", "low_confidence")}
+
+
+def test_no_request_without_change_and_recompute_after_address_correction(dburl, monkeypatch):
+    from psycopg.types.json import Jsonb
+    from app import adjacency
+    from tests.adjacency_helpers import ll
+    calls = []
+    _fake_fetch(monkeypatch, calls)
+    with db.connect(dburl) as conn:
+        lid = _adj_listing(conn, "adj-change")
+        adjacency.process(conn, None)
+        first = _adj(conn, lid)["computed_at"]
+        assert adjacency.process(conn, None)["computed"] == 0 and len(calls) == 1        # rien n'a changé
+        lon, lat = ll(3, 40)                                                          # adresse corrigée à la main
+        conn.execute("UPDATE listing SET address='3 rue de l''Exemple', lat=%s, lon=%s, enrichment = enrichment || %s "
+                     "WHERE id=%s", (lat, lon, Jsonb({"address_method": "user"}), lid))
+        assert adjacency.process(conn, None)["computed"] == 1
+        a = _adj(conn, lid)
+    assert len(calls) == 2 and calls[1][1] == "3 rue de l'Exemple"
+    assert a["input"]["confidence"] == "user" and a["computed_at"] != first
+
+
+def test_merged_position_of_a_secondary_source_is_used(dburl, monkeypatch):
+    from psycopg.types.json import Jsonb
+    from app import adjacency
+    calls = []
+    _fake_fetch(monkeypatch, calls)
+    with db.connect(dburl) as conn:
+        card = _adj_listing(conn, "adj-card", geo_precision="city", address=None, confidence=None)
+        agency = _adj_listing(conn, "adj-agency", confidence="probable")
+        row = conn.execute("SELECT lat, lon FROM listing WHERE id=%s", (agency,)).fetchone()
+        conn.execute("UPDATE listing SET merged_into=%s WHERE id=%s", (card, agency))
+        conn.execute("UPDATE listing SET cluster=%s WHERE id=%s", (Jsonb({"active": True, "fill": {
+            "lat": row["lat"], "lon": row["lon"], "geo_precision": "exact", "address": "1 rue de l'Exemple"}}), card))
+        adjacency.process(conn, None)
+        a, sec = _adj(conn, card), _adj(conn, agency)
+    assert a["status"] == "ok" and a["input"]["confidence"] == "probable" and sec is None
+    assert "probable_address" in a["warnings"]
+
+
+def test_wfs_outage_does_not_stop_the_cycle_and_is_retried_after_6h(dburl, monkeypatch, tmp_path, caplog):
+    import logging
+    from app import adjacency
+    calls = []
+    _cycle_env(monkeypatch, dburl, tmp_path, CRIT_CYCLE, [], photo_seed=1)
+    _fake_fetch(monkeypatch, calls, error="data.geopf.fr : HTTP 504")
+    with db.connect(dburl) as conn:
+        lid = _adj_listing(conn, "adj-outage")
+    with caplog.at_level(logging.INFO, logger="collector"):
+        collector.run_once()
+    with db.connect(dburl) as conn:
+        row = conn.execute("SELECT adjacency, score FROM listing WHERE id=%s", (lid,)).fetchone()
+        assert row["adjacency"]["status"] == "error" and "504" in row["adjacency"]["error"]
+        assert row["score"] is not None                                        # le cycle est allé jusqu'au score
+        assert any(r.message == "mitoyenneté : 0 calculées, 1 échecs, 0 en attente" for r in caplog.records)
+        assert adjacency.process(conn, None)["errors"] == 0 and len(calls) == 1   # pas de nouvel essai avant 6 h
+        conn.execute("UPDATE listing SET adjacency = jsonb_set(adjacency, '{tried_at}', "
+                     "to_jsonb((now() - interval '7 hours')::text)) WHERE id=%s", (lid,))
+        assert adjacency.process(conn, None)["errors"] == 1 and len(calls) == 2
+
+
+def test_backlog_is_bounded_per_cycle_most_recently_enriched_first(dburl, monkeypatch):
+    from app import adjacency
+    calls = []
+    _fake_fetch(monkeypatch, calls)
+    with db.connect(dburl) as conn:
+        ids = [_adj_listing(conn, f"adj-backlog-{i}") for i in range(600)]
+        conn.execute("UPDATE listing SET enriched_at = now() - id * interval '1 minute' WHERE id = ANY(%s)", (ids,))
+        st = adjacency.process(conn, None)
+        done = [r["id"] for r in conn.execute("SELECT id FROM listing WHERE adjacency->>'status' = 'ok' ORDER BY id")]
+        assert st == {"computed": 40, "errors": 0, "pending": 560, "not_applicable": 0}
+        assert done == sorted(ids)[:40]                     # enriched_at le plus récent = plus petit id ici
+        assert adjacency.process(conn, None)["pending"] == 520
+
+
+def test_map_contradicting_the_agent_creates_one_conflict_request_when_garage_confirmed(dburl, monkeypatch):
+    from psycopg.types.json import Jsonb
+    from app import adjacency
+    calls = []
+    _fake_fetch(monkeypatch, calls)
+    with db.connect(dburl) as conn:
+        lid = _adj_listing(conn, "adj-conflict")
+        conn.execute("UPDATE listing SET enrichment = enrichment || %s WHERE id=%s",
+                     (Jsonb({"property_type": "detached"}), lid))
+        adjacency.process(conn, None)
+        row = conn.execute("SELECT enrichment, adjacency, enrichment_status FROM listing WHERE id=%s", (lid,)).fetchone()
+        req = row["enrichment"]["type_request"]
+        assert (req["reason"], req["note"]) == ("conflict", "carte : terraced, agent : detached")
+        assert req["adjacency_at"] == row["adjacency"]["computed_at"] and row["adjacency"]["type_request_created"]
+        conn.execute("UPDATE listing SET enrichment = enrichment - 'type_request' WHERE id=%s", (lid,))
+        adjacency.process(conn, None)                                   # même calcul : pas de nouvelle demande
+        assert "type_request" not in conn.execute("SELECT enrichment FROM listing WHERE id=%s",
+                                                  (lid,)).fetchone()["enrichment"]
+    assert len(calls) == 1
+
+
+def test_no_conflict_request_without_confirmed_garage(dburl, monkeypatch):
+    from psycopg.types.json import Jsonb
+    from app import adjacency
+    _fake_fetch(monkeypatch, [])
+    with db.connect(dburl) as conn:
+        lid = _adj_listing(conn, "adj-nogarage", has_garage=None)
+        conn.execute("UPDATE listing SET enrichment = enrichment || %s WHERE id=%s",
+                     (Jsonb({"property_type": "detached"}), lid))
+        adjacency.process(conn, None)
+        row = conn.execute("SELECT enrichment, adjacency FROM listing WHERE id=%s", (lid,)).fetchone()
+    assert "type_request" not in row["enrichment"] and row["adjacency"]["type_request_created"] is False

@@ -2,7 +2,7 @@ import json
 from app.scoring import fingerprint
 
 FIELDS = ("url", "title", "description", "price", "surface_m2", "land_m2", "rooms", "bedrooms",
-          "property_type", "city", "postal_code", "address", "insee", "dpe", "ges", "dpe_value", "dpe_date",
+          "property_type", "property_type_src", "city", "postal_code", "address", "insee", "dpe", "ges", "dpe_value", "dpe_date",
           "year_built", "has_garage", "has_garden", "has_bathtub", "works", "agency", "lat", "lon",
           "geo_precision", "published_at")
 
@@ -19,14 +19,19 @@ def upsert(conn, item: dict) -> tuple[int, bool]:
     # Ne pas écraser une valeur connue par NULL (les e-mails donnent des fiches partielles),
     # ni une position exacte (adresse trouvée/validée) par la position floutée du portail.
     keep_exact = ("lat", "lon", "geo_precision")
-    updates = ", ".join(
-        (f"{c} = CASE WHEN listing.geo_precision = 'exact' THEN listing.{c} ELSE COALESCE(EXCLUDED.{c}, listing.{c}) END"
-         if c in keep_exact else
-         ("address = CASE WHEN listing.geo_precision = 'exact' "
-          "OR listing.enrichment->>'address_method' = 'user' "
-          "THEN listing.address ELSE COALESCE(EXCLUDED.address, listing.address) END"
-          if c == "address" else f"{c} = COALESCE(EXCLUDED.{c}, listing.{c})"))
-        for c in vals if c not in ("price", "photo_urls"))
+
+    def update(c):
+        if c in keep_exact:
+            return f"{c} = CASE WHEN listing.geo_precision = 'exact' THEN listing.{c} ELSE COALESCE(EXCLUDED.{c}, listing.{c}) END"
+        if c == "address":
+            return ("address = CASE WHEN listing.geo_precision = 'exact' "
+                    "OR listing.enrichment->>'address_method' = 'user' "
+                    "THEN listing.address ELSE COALESCE(EXCLUDED.address, listing.address) END")
+        if c == "property_type_src":     # la provenance suit le type (un « unknown » neuf efface l'ancienne provenance)
+            return ("property_type_src = CASE WHEN EXCLUDED.property_type IS NOT NULL "
+                    "THEN EXCLUDED.property_type_src ELSE listing.property_type_src END")
+        return f"{c} = COALESCE(EXCLUDED.{c}, listing.{c})"
+    updates = ", ".join(update(c) for c in vals if c not in ("price", "photo_urls"))
     sql = f"""
     INSERT INTO listing ({", ".join(cols)}) VALUES ({insert_vals})
     ON CONFLICT (source, external_id) DO UPDATE SET

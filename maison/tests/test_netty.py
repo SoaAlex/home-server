@@ -33,8 +33,17 @@ def test_parse_product_marcq_house():
 
 
 def test_type_house_codes():
-    assert netty.parse_product(products()["VM1170"], SITE)["property_type"] == "detached"    # 01 individuelle
-    assert netty.parse_product(products()["VM1079"], SITE)["property_type"] == "terraced"    # 03 mitoyenne 2 côtés
+    a = netty.parse_product(products()["VM1170"], SITE)
+    b = netty.parse_product(products()["VM1079"], SITE)
+    assert (a["property_type"], a["property_type_src"]) == ("detached", "structured")    # 01 individuelle
+    assert (b["property_type"], b["property_type_src"]) == ("terraced", "structured")    # 03 mitoyenne 2 côtés
+
+
+def test_type_without_code_comes_from_text():
+    p = {**products()["VM1170"], "type_house": None}
+    it = netty.parse_product(p, SITE)
+    assert it["property_type_src"] in ("text_explicit", "text_weak", None)
+    assert it["property_type_src"] != "structured"
 
 
 def test_keep_filters_zone_price_and_sold():

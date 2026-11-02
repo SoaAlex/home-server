@@ -49,6 +49,7 @@ def test_dreossi_list_and_detail():
     d = agences.dreossi_parse_detail(read("dreossi_detail.html"))
     assert d["surface_m2"] == 103 and d["dpe"] == "E" and d["ges"] == "E" and d["price"] is None
     assert d["property_type"] == "terraced" and len(d["photo_urls"]) >= 5
+    assert d["property_type_src"] in ("text_explicit", "text_weak")
 
 
 class Resp:
@@ -123,4 +124,5 @@ def test_iec_detail_capinghem():
     assert d["dpe"] == "C" and d["dpe_value"] == 120 and d["ges"] == "C" and d["dpe_date"] == "2025-06-18"
     assert d["has_garage"] and d["has_garden"] and d["has_bathtub"] and d["works"] == "none"
     assert d["property_type"] == "detached" and len(d["photo_urls"]) == 7
+    assert d["property_type_src"] == "text_explicit"
     assert d["description"].startswith("COUP DE") and "Ref." not in d["description"]

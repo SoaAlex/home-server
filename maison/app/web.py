@@ -1,14 +1,14 @@
 from datetime import datetime, timezone
 import json
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import httpx
 from psycopg.types.json import Jsonb
-from app import db, dedupe, geo, settings
+from app import adjacency, aerial, contact_sheet, db, dedupe, geo, settings, streetview
 from app.collector import postprocess, rescore
-from app.scoring import effective, merged_columns
+from app.scoring import TYPE_LABELS, check_type_fields, effective, merged_columns, type_info
 
 app = FastAPI(title="Maison")
 templates = Jinja2Templates(directory="app/templates")
@@ -16,7 +16,7 @@ app.mount("/static", StaticFiles(directory="app/static"), name="static")
 (settings.DATA_DIR / "photos").mkdir(parents=True, exist_ok=True)
 app.mount("/photos", StaticFiles(directory=settings.DATA_DIR / "photos"), name="photos")
 
-COLS = ("id, source, url, title, price, surface_m2, land_m2, rooms, bedrooms, property_type, city, "
+COLS = ("id, source, url, title, price, surface_m2, land_m2, rooms, bedrooms, property_type, property_type_src, city, "
         "postal_code, dpe, ges, year_built, has_garage, has_garden, has_bathtub, works, agency, lat, lon, "
         "geo_precision, address, photos, photo_urls, first_seen, last_seen, published_at, status, "
         "price_history, commute, enrichment, enrichment_status, score, score_details, excluded_reason, "
@@ -62,8 +62,11 @@ ACTIVE_SQL = "(status = 'active' OR coalesce((cluster->>'active')::boolean, fals
 
 
 def _view(row: dict) -> dict:
-    """Annonce principale telle qu'affichée : colonnes vides complétées par les autres sources du bien."""
-    return merged_columns(row) if row.get("cluster") else row
+    """Annonce principale telle qu'affichée : colonnes vides complétées par les autres sources du bien, type retenu
+    expliqué (`type_info`). La description, lue pour citer l'expression du texte, n'est pas renvoyée dans la liste."""
+    out = merged_columns(row) if row.get("cluster") else dict(row)
+    out["type_info"] = type_info(row)
+    return out
 
 
 @app.get("/api/listings")
@@ -76,10 +79,11 @@ def listings(show_excluded: int = 0, include_gone: int = 0, dups: int = 0):
     if dups:
         where.append("dup_n > 0")
     with db.connect() as conn:
-        rows = conn.execute(f"{DUP_PENDING_CTE} SELECT {COLS}, coalesce(dup_n, 0) AS dup_pending FROM listing "
+        rows = conn.execute(f"{DUP_PENDING_CTE} SELECT {COLS}, description, adjacency - 'geometry' AS adjacency, "
+                            "coalesce(dup_n, 0) AS dup_pending FROM listing "
                             f"LEFT JOIN dup ON dup_lid = listing.id WHERE {' AND '.join(where)} "
                             "ORDER BY score DESC NULLS LAST, first_seen DESC").fetchall()
-    return [_view(r) for r in rows]
+    return [{k: v for k, v in _view(r).items() if k != "description"} for r in rows]
 
 
 SUMMARY_COLS = ("id, source, url, title, price, surface_m2, land_m2, rooms, bedrooms, city, postal_code, address, "
@@ -120,7 +124,8 @@ def _suggestions(conn, group: list[int]) -> list[dict]:
 @app.get("/api/listings/{lid}")
 def listing(lid: int):
     with db.connect() as conn:
-        row = conn.execute(f"SELECT {COLS}, description, raw->'blurInfo' AS blur FROM listing WHERE id=%s", (lid,)).fetchone()
+        row = conn.execute(f"SELECT {COLS}, description, raw->'blurInfo' AS blur, adjacency FROM listing WHERE id=%s",
+                           (lid,)).fetchone()
         if not row:
             raise HTTPException(404)
         if row["merged_into"]:                # source secondaire : l'UI ouvre la fiche principale
@@ -247,6 +252,120 @@ def set_address(lid: int, body: dict):
         return conn.execute("SELECT id, address, lat, lon, commute, score FROM listing WHERE id=%s", (lid,)).fetchone()
 
 
+@app.post("/api/listings/{lid}/property_type")
+def set_property_type(lid: int, body: dict):
+    """Type corrigé à la main depuis la fiche (cinq catégories), ou retour à l'automatique avec `null`.
+    Retenu avant toute autre source (enrichment.property_type_user), score recalculé tout de suite."""
+    typ = body.get("type")
+    if typ is not None and typ not in TYPE_LABELS:
+        raise HTTPException(400, "type = " + " | ".join(TYPE_LABELS) + " | null")
+    with db.connect() as conn:
+        try:
+            pid = dedupe.principal_of(conn, lid)
+        except LookupError:
+            raise HTTPException(404)
+        if typ is None:
+            conn.execute("UPDATE listing SET enrichment = enrichment - 'property_type_user' WHERE id=%s", (pid,))
+        else:
+            conn.execute("UPDATE listing SET enrichment = enrichment || %s WHERE id=%s",
+                         (Jsonb({"property_type_user": typ}), pid))
+        _rescore(conn, [pid])
+        row = conn.execute(f"SELECT {COLS}, description, adjacency - 'geometry' AS adjacency FROM listing WHERE id=%s",
+                           (pid,)).fetchone()
+    return {"id": pid, "score": row["score"], "score_details": row["score_details"], "type_info": type_info(row)}
+
+
+@app.post("/api/listings/{lid}/type_request")
+def request_type_check(lid: int, body: dict | None = None):
+    """« Faire vérifier le type » : demande à l'agent une vérification par côté (file à part, design D13)."""
+    with db.connect() as conn:
+        try:
+            pid = dedupe.principal_of(conn, lid)
+        except LookupError:
+            raise HTTPException(404)
+        adj = conn.execute("SELECT adjacency->>'computed_at' AS at FROM listing WHERE id=%s", (pid,)).fetchone()
+        req = {"requested_at": datetime.now(timezone.utc).isoformat(), "reason": "user",
+               "note": ((body or {}).get("note") or "")[:300], "adjacency_at": adj["at"]}
+        conn.execute("UPDATE listing SET enrichment = enrichment || %s WHERE id=%s", (Jsonb({"type_request": req}), pid))
+    return {"ok": True, "id": pid, "type_request": req}
+
+
+@app.get("/api/enrichment/type_checks")
+def type_checks(limit: int = 8, x_token: str = Header(None)):
+    """File des vérifications de type : annonces actives avec une demande, meilleur score d'abord, puis la plus
+    ancienne demande. Indépendante de enrichment_status (la file standard n'est pas touchée)."""
+    _auth(x_token)
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"SELECT {COLS}, description, raw->'blurInfo' AS blur, adjacency - 'geometry' AS adjacency FROM listing "
+            f"WHERE enrichment ? 'type_request' AND merged_into IS NULL AND {ACTIVE_SQL} "
+            "AND (excluded_reason IS NULL OR excluded_reason = 'à compléter') "
+            "AND (reaction IS DISTINCT FROM 'dislike' OR enrichment->'type_request'->>'reason' = 'user') "
+            "ORDER BY score DESC NULLS LAST, enrichment->'type_request'->>'requested_at', id LIMIT %s",
+            (limit,)).fetchall()
+    return [{**r, "type_info": type_info(r)} for r in rows]
+
+
+def _type_check_entry(old: dict, body: dict) -> dict:
+    ev = body.get("type_evidence") if isinstance(body.get("type_evidence"), dict) else {}
+    return {**(old.get("type_request") or {}), "done_at": datetime.now(timezone.utc).isoformat(),
+            "verdict": body.get("property_type"), "sides": [ev.get("left"), ev.get("right")] if ev else None,
+            "notes": ev.get("notes")}
+
+
+@app.get("/api/listings/{lid}/contact_sheet.jpg")
+def listing_contact_sheet(lid: int, x_token: str = Header(None)):
+    """Planche des photos locales du bien, numérotées (l'agent cite les photos par leur indice)."""
+    _auth(x_token)
+    with db.connect() as conn:
+        try:
+            pid = dedupe.principal_of(conn, lid)
+        except LookupError:
+            raise HTTPException(404, "annonce inconnue")
+        row = conn.execute("SELECT photos, cluster FROM listing WHERE id=%s", (pid,)).fetchone()
+    data = contact_sheet.build(settings.DATA_DIR / "photos", contact_sheet.local_photos(row))
+    if not data:
+        raise HTTPException(404, "aucune photo locale pour cette annonce (vignettes non téléchargées)")
+    return Response(data, media_type="image/jpeg")
+
+
+def _street(lid: int):
+    with db.connect() as conn:
+        try:
+            pid = dedupe.principal_of(conn, lid)
+        except LookupError:
+            raise HTTPException(404, "annonce inconnue")
+        row = conn.execute("SELECT id, lat, lon, geo_precision, address, cluster, adjacency FROM listing WHERE id=%s",
+                           (pid,)).fetchone()
+    target = streetview.target_of(row)
+    if not target:
+        return pid, {"available": False, "reason": "maison non localisée"}, None
+    with httpx.Client(headers={"User-Agent": settings.USER_AGENT}, timeout=30) as client:
+        try:
+            meta, data = streetview.street_view(client, pid, *target)
+        except adjacency.FetchError as e:
+            raise HTTPException(502, f"Panoramax : {e}")
+    return pid, meta, data
+
+
+@app.get("/api/listings/{lid}/street")
+def listing_street(lid: int):
+    """Vue de rue Panoramax de la maison (date, distance, auteur, licence, lien vers la visionneuse)."""
+    pid, meta, _ = _street(lid)
+    out = {k: v for k, v in meta.items() if k not in ("key", "fetched_at")}
+    if meta.get("available"):
+        out["image_url"] = f"/api/listings/{pid}/street.jpg?k={meta['key']}"
+    return out
+
+
+@app.get("/api/listings/{lid}/street.jpg")
+def listing_street_image(lid: int):
+    _, meta, data = _street(lid)
+    if not data:
+        raise HTTPException(404, meta.get("reason") or "aucune vue de rue")
+    return Response(data, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+
+
 @app.post("/api/listings/{lid}/address_request")
 def request_address_investigation(lid: int, body: dict | None = None):
     """Demande à l'agent Hermes une recherche d'adresse approfondie (traitée en priorité)."""
@@ -265,13 +384,15 @@ def request_address_investigation(lid: int, body: dict | None = None):
 def pending(limit: int = 5, x_token: str = Header(None)):
     _auth(x_token)
     with db.connect() as conn:
-        return conn.execute(
-            f"SELECT {COLS}, description, raw->'blurInfo' AS blur FROM listing WHERE status='active' AND enrichment_status='pending' "
+        rows = conn.execute(
+            f"SELECT {COLS}, description, raw->'blurInfo' AS blur, adjacency - 'geometry' AS adjacency FROM listing "
+            "WHERE status='active' AND enrichment_status='pending' "
             "AND merged_into IS NULL "     # sources secondaires d'un bien fusionné : jamais proposées à l'agent
             "AND (excluded_reason IS NULL OR excluded_reason='à compléter') "
             "AND (reaction IS DISTINCT FROM 'dislike' OR enrichment ? 'address_request') "
             "ORDER BY (enrichment ? 'address_request') DESC, (first_seen > now() - interval '48 hours') DESC, score DESC NULLS LAST, first_seen DESC LIMIT %s",
             (limit,)).fetchall()
+    return [{**r, "type_info": type_info(r)} for r in rows]
 
 
 @app.get("/api/tools/ademe")
@@ -331,9 +452,94 @@ def tool_cadastre(lon: float, lat: float, radius_m: int = 300, min_m2: int = 0, 
     return {"count": len(out), "parcels": out[:200]}
 
 
+@app.get("/api/tools/adjacency")
+def tool_adjacency(address: str | None = None, lon: float | None = None, lat: float | None = None,
+                   geometry: int = 0, x_token: str = Header(None)):
+    """Mitoyenneté cartographique d'une adresse ou d'un point quelconque (adresses candidates d'une
+    investigation) : calculée à la demande, jamais enregistrée sur une annonce."""
+    _auth(x_token)
+    if not address and (lon is None or lat is None):
+        raise HTTPException(400, "address=… ou lon=…&lat=…")
+    with httpx.Client(headers={"User-Agent": settings.USER_AGENT}, timeout=30) as client:
+        res = adjacency.compute(client, lon, lat, address)
+    if res["status"] == "error":
+        raise HTTPException(422 if res.get("not_found") else 502, f"mitoyenneté : {res['error']}")
+    if not geometry:
+        res.pop("geometry", None)
+    return res
+
+
+def _adjacency_unavailable(adj: dict | None) -> str:
+    adj = adj or {}
+    if adj.get("status") == "not_applicable":
+        return f"mitoyenneté non applicable : maison non localisée ({adj.get('reason')})"
+    if adj.get("status") == "error":
+        return f"dernier calcul de mitoyenneté en échec : {adj.get('error')}"
+    return "mitoyenneté pas encore calculée (cycle suivant du collecteur)"
+
+
+@app.get("/api/tools/aerial")
+def tool_aerial(listing_id: int | None = None, lon: float | None = None, lat: float | None = None,
+                address: str | None = None, x_token: str = Header(None)):
+    """Vue aérienne annotée (JPEG 700 × 700, design D10) d'une annonce à adresse précise, d'une adresse candidate
+    ou d'un point (ces deux derniers : calcul à la demande, sans cache ni enregistrement)."""
+    _auth(x_token)
+    if listing_id is None and not address and (lon is None or lat is None):
+        raise HTTPException(400, "listing_id=…, address=… ou lon=…&lat=…")
+    with httpx.Client(headers={"User-Agent": settings.USER_AGENT}, timeout=30) as client:
+        try:
+            if listing_id is not None:
+                with db.connect() as conn:
+                    try:
+                        pid = dedupe.principal_of(conn, listing_id)
+                    except LookupError:
+                        raise HTTPException(404, "annonce inconnue")
+                    adj = conn.execute("SELECT adjacency FROM listing WHERE id=%s", (pid,)).fetchone()["adjacency"]
+                if (adj or {}).get("status") not in ("ok", "no_building") or not adj.get("geometry"):
+                    raise HTTPException(404, _adjacency_unavailable(adj))
+                data = aerial.cached(client, pid, adj)
+            else:
+                adj = adjacency.compute(client, lon, lat, address)
+                if adj["status"] == "error":
+                    raise HTTPException(422 if adj.get("not_found") else 502, f"mitoyenneté : {adj['error']}")
+                data = aerial.render(client, adj)
+        except adjacency.FetchError as e:
+            raise HTTPException(502, f"orthophoto : {e}")
+    return Response(data, media_type="image/jpeg")
+
+
+def _post_type_check(lid: int, body: dict):
+    """Seuls les champs du type sont fusionnés ; la demande passe dans l'historique ; statut et date
+    d'enrichissement inchangés."""
+    with db.connect() as conn:
+        cur = conn.execute("SELECT enrichment FROM listing WHERE id=%s", (lid,)).fetchone()
+        if not cur:
+            raise HTTPException(404)
+        old = cur["enrichment"] or {}
+        upd = {k: body[k] for k in ("property_type", "type_evidence") if k in body}
+        flags = [f for f in body.get("red_flags") or [] if f not in (old.get("red_flags") or [])]
+        if flags:
+            upd["red_flags"] = (old.get("red_flags") or []) + flags
+        upd["type_checks"] = old.get("type_checks", []) + [_type_check_entry(old, body)]
+        conn.execute("UPDATE listing SET enrichment = (enrichment - 'type_request') || %s WHERE id=%s",
+                     (Jsonb(upd), lid))
+        principal = conn.execute("SELECT merged_into FROM listing WHERE id=%s", (lid,)).fetchone()["merged_into"]
+        with httpx.Client(headers={"User-Agent": settings.USER_AGENT}, timeout=30) as client:
+            if principal:
+                dedupe.refresh_cluster(conn, principal)
+            rescore(conn, client, settings.load_criteria(), ids=[principal or lid])
+        return conn.execute("SELECT id, score, excluded_reason, enrichment_status FROM listing WHERE id=%s",
+                            (lid,)).fetchone()
+
+
 @app.post("/api/listings/{lid}/enrichment")
 def enrich(lid: int, body: dict, x_token: str = Header(None)):
     _auth(x_token)
+    body.pop("property_type_user", None)          # choix de l'utilisateur : jamais écrit par l'agent
+    if err := check_type_fields(body):            # avant toute écriture
+        raise HTTPException(422, err)
+    if body.pop("_type_check", False):            # réponse à une demande de vérification du type
+        return _post_type_check(lid, body)
     status = "failed" if body.pop("_failed", False) else "done"
     photo_urls = body.pop("photo_urls", None)
     with db.connect() as conn:
@@ -351,8 +557,12 @@ def enrich(lid: int, body: dict, x_token: str = Header(None)):
                 "result": direct.get("address"), "confidence": body.get("address_confidence"),
                 "notes": body.get("address_notes")}]
             body["address_investigations"] = hist
+        if old.get("type_request") and isinstance(body.get("type_evidence"), dict):   # vérification faite au passage
+            body["type_checks"] = old.get("type_checks", []) + [_type_check_entry(old, body)]
         conn.execute("UPDATE listing SET enrichment = (enrichment - 'address_request') || %s, enrichment_status=%s, "
                      "enriched_at=now() WHERE id=%s", (Jsonb(body), status, lid))
+        if "type_checks" in body:
+            conn.execute("UPDATE listing SET enrichment = enrichment - 'type_request' WHERE id=%s", (lid,))
         for k, v in direct.items():          # k vient de la liste blanche DIRECT
             conn.execute(f"UPDATE listing SET {k}=%s WHERE id=%s", (v, lid))
         if "lat" in direct and "lon" in direct:

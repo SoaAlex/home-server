@@ -51,6 +51,7 @@ def parse_product(p: dict, site: dict) -> dict:
     # on s'en tient au texte, l'agent d'enrichissement vérifie sur les photos.
     bath = tp.tri_bathtub(text)
     online = _int(p.get("time_online"))
+    declared = TYPES.get(p.get("type_house"))      # type saisi par l'agence : prime sur le texte
     slug = _fr(p.get("url")) or "maison"
     ref = p.get("prod_ref") or p.get("ref")
     return dict(
@@ -59,7 +60,7 @@ def parse_product(p: dict, site: dict) -> dict:
         title=title, description=desc[:6000], price=_int(p.get("pricePrimary") or p.get("price2")),
         surface_m2=_int(p.get("surface")), land_m2=_int(p.get("land")) or _int(p.get("garden2")),
         rooms=_int(p.get("rooms")), bedrooms=_int(p.get("rooms2")),
-        property_type=TYPES.get(p.get("type_house")) or tp.detect_type(text),
+        **({"property_type": declared, "property_type_src": "structured"} if declared else tp.type_fields(text)),
         city=p.get("city"), postal_code=str(p.get("cp") or "") or None,
         year_built=_int(p.get("year")),
         has_garage=garage,

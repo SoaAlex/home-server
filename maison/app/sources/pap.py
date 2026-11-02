@@ -158,7 +158,7 @@ def parse_detail(html: str) -> dict:
             out["dpe" if i == 0 else "ges"] = act.text(strip=True).upper()[:1]
     full = f"{out.get('title') or ''} {out.get('description') or ''}"
     out.update(has_garage=tp.tri_garage(full), has_garden=tp.tri_garden(full), has_bathtub=tp.tri_bathtub(full),
-               works=tp.detect_works(full), property_type=tp.detect_type(full))
+               works=tp.detect_works(full), **tp.type_fields(full))
     return out
 
 

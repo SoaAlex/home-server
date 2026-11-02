@@ -98,3 +98,12 @@ CREATE TABLE IF NOT EXISTS duplicate_pair (
 );
 CREATE INDEX IF NOT EXISTS duplicate_pair_b_idx ON duplicate_pair (id_b);
 CREATE INDEX IF NOT EXISTS duplicate_pair_status_idx ON duplicate_pair (status);
+
+-- Mitoyenneté (change OpenSpec improve-adjacency-detection).
+-- `adjacency` = calcul cartographique (BD TOPO, BAN PLUS, cadastre) ; `property_type_src` = provenance du type
+-- déclaré par l'annonce : structured (champ de la source) | text_explicit | text_weak.
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS adjacency JSONB;
+ALTER TABLE listing ADD COLUMN IF NOT EXISTS property_type_src TEXT;
+-- File des vérifications de type par l'agent (enrichment.type_request), hors enrichment_status.
+CREATE INDEX IF NOT EXISTS listing_type_request_idx ON listing ((enrichment ? 'type_request'))
+    WHERE enrichment ? 'type_request';
