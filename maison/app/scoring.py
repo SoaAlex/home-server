@@ -84,7 +84,7 @@ def _verdicts(row: dict) -> list[dict]:
     if agent not in TYPES and fa.get("type") in TYPES:                 # verdict de l'agent sur une secondaire
         agent, ev, frm = fa["type"], fa.get("evidence"), fa.get("from")
     if agent in TYPES:
-        has_ev = isinstance(ev, dict)
+        has_ev = _backs(ev, agent)
         out.append({"source": "agent", "type": agent, "rank": 2 if has_ev else 4, "evidence": has_ev,
                     "_ev": ev, "from": frm})
     adj = row.get("adjacency") or {}
@@ -99,6 +99,18 @@ def _verdicts(row: dict) -> list[dict]:
     if col in TYPES:
         out.append({"source": "listing", "type": col, "rank": 6, "strength": src, "from": frm})
     return out
+
+
+def _backs(ev, agent: str) -> bool:
+    """Preuves qui soutiennent le verdict de l'agent : au moins un côté qualifié, et des côtés qui ne désignent pas
+    un autre type. Des preuves postées sans `property_type` (côtés inconnus) ne promeuvent pas un ancien verdict."""
+    if not isinstance(ev, dict):
+        return False
+    left, right = ev.get("left"), ev.get("right")
+    if left in (None, "unknown") and right in (None, "unknown"):
+        return False
+    implied = type_from_sides(left, right) if left in SIDES and right in SIDES else None
+    return implied is None or implied == agent
 
 
 def _counts(v: dict) -> bool:
@@ -147,6 +159,8 @@ def resolve_type(row: dict, explain: bool = False) -> dict:
                 detail += " — non utilisée"
         elif v["source"] == "agent":
             detail = _agent_detail(v["_ev"])
+            if isinstance(v["_ev"], dict) and not v["evidence"]:
+                detail = f"ancien verdict ; vérification non concluante ({detail})"
         elif v["source"] == "listing":
             strength = v.get("strength")
             detail = ("champ structuré" if strength == "structured" else f"« {phrase} »" if phrase

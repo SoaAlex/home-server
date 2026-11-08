@@ -23,7 +23,7 @@ from PIL import Image
 from psycopg.types.json import Jsonb
 
 from app import settings
-from app.scoring import OVERRIDABLE, POSITION
+from app.scoring import OVERRIDABLE, POSITION, _backs
 from app.textparse import city_key, norm
 
 # ---------- seuils (design D4, D7 ; à recalibrer sur le rapport à blanc) ----------
@@ -756,7 +756,8 @@ def _agent_type(r: dict) -> dict | None:
     if enr.get("property_type") not in TYPES:
         return None
     ev = enr.get("type_evidence") if isinstance(enr.get("type_evidence"), dict) else None
-    return {"type": enr["property_type"], "evidence": ev, "rank": 0 if ev else 1, "id": r["id"]}
+    return {"type": enr["property_type"], "evidence": ev, "rank": 0 if _backs(ev, enr["property_type"]) else 1,
+            "id": r["id"]}
 
 
 def build_cluster(p: dict, members: list[dict], hashes: dict[int, dict], now: datetime | None = None) -> dict | None:

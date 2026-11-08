@@ -185,7 +185,7 @@
   - les demandes de vérification ne comptent pas comme des enrichissements bloqués.
 
   Vérifier que `python3 -m unittest discover -s ops` passe et que `python3 -I ops/healthcheck.py --no-state --json` affiche les nouveaux faits.
-- [ ] 8.3 Créer le cron `maison-type-check` avec `cronjob_manage` (`40 8-22 * * *`, skill `maison-enrichment`, consigne de D13), d'abord en pause. Lancer un passage manuel sur 2 ou 3 demandes. Vérifier les POST, l'historique `type_checks` et la sortie de la file, puis activer le cron.
+- [x] 8.3 Créer le cron `maison-type-check` avec `cronjob_manage` (`40 8-22 * * *`, skill `maison-enrichment`, consigne de D13), d'abord en pause. Lancer un passage manuel sur 2 ou 3 demandes. Vérifier les POST, l'historique `type_checks` et la sortie de la file, puis activer le cron.
 
 ## 9. Mise en service et vérification d'ensemble
 

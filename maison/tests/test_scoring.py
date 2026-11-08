@@ -98,7 +98,7 @@ def test_cluster_price_exclusion_uses_retained_price():
 # ---------- type retenu (spec property-type-resolution) ----------
 from app.scoring import resolve_type, type_info  # noqa: E402
 
-EVIDENCE = {"left": "house", "right": "garage", "seen_on": ["listing_photos"], "photos": [0, 3], "notes": "garage à droite"}
+EVIDENCE = {"left": "free", "right": "garage", "seen_on": ["listing_photos"], "photos": [0, 3], "notes": "garage à droite"}
 
 
 def adj(typ, confidence="exact", usable=True, walls=(9.0, 8.0), links=(), warnings=()):
@@ -122,7 +122,24 @@ def test_agent_with_evidence_beats_the_map():
     t = type_info(row)
     assert (t["type"], t["source"], t["disagreement"]) == ("link_detached", "agent", True)
     assert next(v for v in t["verdicts"] if v["used"])["detail"] == \
-        "gauche : maison · droite : garage · photos 0, 3 · photos de l'annonce"
+        "gauche : libre · droite : garage · photos 0, 3 · photos de l'annonce"
+
+
+def test_evidence_without_qualified_side_does_not_promote_an_old_verdict():
+    """Vérification sans conclusion (côtés inconnus, pas de property_type) : l'ancien verdict reste « sans preuves »."""
+    ev = {"left": "unknown", "right": "unknown", "seen_on": ["text"], "photos": [], "notes": "aucune façade"}
+    row = {**BASE, "enrichment": {"property_type": "semi", "type_evidence": ev}, "adjacency": adj("terraced")}
+    t = type_info(row)
+    assert (t["type"], t["source"]) == ("terraced", "map")
+    agent = next(v for v in t["verdicts"] if v["source"] == "agent")
+    assert agent["disagrees"] and agent["detail"].startswith("ancien verdict ; vérification non concluante")
+
+
+def test_evidence_contradicting_the_old_verdict_does_not_back_it():
+    ev = {"left": "house", "right": "free", "seen_on": ["street_view"], "photos": [], "notes": ""}
+    row = {**BASE, "property_type": None, "enrichment": {"property_type": "terraced", "type_evidence": ev}}
+    t = resolve_type(row)
+    assert (t["type"], t["source"], t["confidence"]) == ("terraced", "agent", "medium")   # ancien verdict, rang 4
 
 
 def test_user_correction_wins_over_everything():
