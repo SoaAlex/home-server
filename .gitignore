@@ -18,6 +18,8 @@ home-server/pihole/pihole/versions
 home-server/pihole/pihole/gravity.db
 home-server/pihole/pihole/gravity_old.db
 home-server/pihole/pihole/pihole-FTL.db*
+# Pi-hole's own config: FTL writes the admin password hash (webserver.api.pwhash) into it
+home-server/pihole/pihole/pihole.toml
 home-server/pihole/pihole/pihole.toml.lock
 home-server/pihole/pihole/logrotate
 
