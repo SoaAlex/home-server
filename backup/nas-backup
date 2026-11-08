@@ -1,0 +1,3 @@
+#!/bin/sh
+# NAS backup CLI (restic on the RAID): run | weekly | restore-test | status | alert-test | restic ARGS
+exec /usr/bin/python3 -I /volume1/docker/backup/nas_backup.py "$@"

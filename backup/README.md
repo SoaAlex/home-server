@@ -4,7 +4,7 @@
 volumes, root-owned data, the repository itself) runs in throw-away containers of the image
 `nas-backup:latest` (built from this folder when missing; never `docker image prune -a` it away).
 
-## What is saved, every night at 04:00
+## What is saved, every night at 04:30
 
 | Item | How |
 |---|---|

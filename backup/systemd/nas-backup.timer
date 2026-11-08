@@ -1,8 +1,8 @@
 [Unit]
-Description=Nightly NAS backup (04:00)
+Description=Nightly NAS backup (04:30)
 
 [Timer]
-OnCalendar=*-*-* 04:00:00
+OnCalendar=*-*-* 04:30:00
 Persistent=true
 RandomizedDelaySec=300
 
