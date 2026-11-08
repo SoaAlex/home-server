@@ -32,6 +32,9 @@ home-server/wireguard/
 # Aiostreams app data (not config)
 home-server/aiostreams/
 
+# StremThru runtime data (SQLite cache, rebuilt on start)
+home-server/stremthru/
+
 # TeslaMate
 teslamate/mosquitto-teslamate/mosquitto-data/
 teslamate/import/

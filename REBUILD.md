@@ -192,7 +192,7 @@ Each stack needs its `.env` present first:
 |---|---|
 | `common/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
 | `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `CODE_SERVER_PASSWORD`, `PTZ_API_TOKEN`, `PTZ_CAMERA_USER`, `WSTUNNEL_PATH_PREFIX` |
-| `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI` |
+| `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI`, `BUILTIN_STREMTHRU_URL` (must be `http://stremthru:8080`, or debrid playback fails) |
 | `home-server/aiometadata/.env` | `PORT`, `HOST_NAME`, `NODE_ENV`, `LOG_LEVEL`, `DATABASE_URI`, `REDIS_URL`, `ADMIN_KEY` |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
 | `maison/.env` | `DATABASE_URL`, `TEST_DATABASE_URL`, `DISCORD_WEBHOOK_URL`, `ENRICH_TOKEN`, `PUBLIC_BASE_URL`, `IMAP_HOST`, `IMAP_USER`, `IMAP_PASSWORD`, `TZ` |
@@ -293,6 +293,7 @@ data, and the Vaultwarden vault. Empty ones mean §3 went wrong.
 | home-server | WireGuard | `linuxserver/wireguard` | 51820/udp | **host** |
 | home-server | wstunnel | `ghcr.io/erebe/wstunnel` | 8480 (behind NPM) | **host** |
 | home-server | AIOStreams | `viren070/aiostreams` | 1080→3000 | `home-server-network`, `common-network` |
+| home-server | StremThru | `muniftanjim/stremthru` | — (internal, `stremthru:8080`) | `home-server-network` |
 | home-server | Frigate | `blakeblackshear/frigate` | 8971 | `home-server-network` |
 | teslamate | TeslaMate | `teslamate/teslamate` | 4000 | `default`, `common-network` |
 | teslamate | Grafana | `teslamate/grafana` | 3000 | `default`, `common-network` |

@@ -117,6 +117,7 @@ cameras.
 | wstunnel | `erebe/wstunnel` | 8480 | WireGuard over WebSocket/TLS, behind NPM |
 | AIOStreams | `viren070/aiostreams` | 1080 | Stremio add-on aggregator |
 | AIOMetadata | `cedya77/aiometadata` | 3232 | Stremio metadata add-on |
+| StremThru | `muniftanjim/stremthru` | none | Debrid API gateway for AIOStreams, internal only |
 | Frigate | `blakeblackshear/frigate` | 8971 | NVR; needs `/dev/dri/renderD128` |
 | PTZ preset | `python:3.12-alpine` | 8095 | Named camera positions for Home Assistant |
 
@@ -193,7 +194,7 @@ Secrets live in git-ignored `.env` files, one per stack.
 |---|---|
 | `common/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
 | `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `CODE_SERVER_PASSWORD`, `PTZ_CAMERA_USER`, `PTZ_API_TOKEN`, `WSTUNNEL_PATH_PREFIX` |
-| `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI` |
+| `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI`, `BUILTIN_STREMTHRU_URL` |
 | `maison/.env` | `DATABASE_URL`, `DISCORD_WEBHOOK_URL`, `ENRICH_TOKEN`, `IMAP_USER`, `IMAP_PASSWORD`, and more |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
 | `eurl-frais/.env` | `ORANGE_USERNAME`, `ORANGE_PASSWORD`, `ORANGE_SHARE`, `GAS_MONTHLY_EUR`, `ELECTRICITY_MONTHLY_EUR`, `DISCORD_WEBHOOK_URL`, and more |

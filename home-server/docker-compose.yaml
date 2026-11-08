@@ -165,6 +165,33 @@ services:
       retries: 3
       start_period: 40s
 
+  stremthru:
+    image: muniftanjim/stremthru:latest
+    container_name: stremthru
+    restart: unless-stopped
+    # AIOStreams reaches its debrid provider through this instance. Running it
+    # here makes the provider see the home IP: the public StremThru runs from a
+    # datacenter and the provider refuses it (NO_SERVER). Internal only, no
+    # published port.
+    # Store API only: the dataset syncs and addon modules are switched off
+    # (the NAS has little free RAM).
+    dns:
+      - 192.168.1.1
+      - 8.8.8.8
+    environment:
+      STREMTHRU_FEATURE: "-dmm_hashlist,-imdb_title,-meta,-probe_media_info,-stremio_list,-stremio_newz,-stremio_sidekick,-stremio_store,-stremio_torz,-stremio_wrap,-sync,-vault"
+      STREMTHRU_DATABASE_URI: "sqlite://./data/stremthru.db?max_conns=2"
+      GOMEMLIMIT: 192MiB
+    mem_limit: 256m
+    volumes:
+      - /volume1/docker/home-server/stremthru:/app/data
+    networks:
+      - home-server-network
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
 
   frigate:
     image: ghcr.io/blakeblackshear/frigate:stable
