@@ -1,0 +1,7 @@
+#!/bin/sh
+# mrun <cmd...> : run a command in the maison `web` container with the repo bind-mounted on /app
+# (tests: `mrun pytest -q`). Host version: no chown step (files are created by the host user's
+# containers/commands, and a non-root chown of root-owned leftovers would fail anyway).
+# Sandbox original: ~/.hermes/sandboxes/docker/default/workspace/bin/mrun
+cd /volume1/docker/maison || exit 1
+exec docker compose run --rm -T -v /volume1/docker/maison:/app web "$@"

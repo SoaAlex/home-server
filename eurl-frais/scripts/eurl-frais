@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""Run the eurl-frais CLI in its container on the NAS (through dk).
+"""Run the eurl-frais CLI in its container on the NAS.
 
 Usage: eurl-frais monthly [--month AAAA-MM] [--dry-run] [--no-notify] [--skip-orange] [--resend]
        eurl-frais orange [--month AAAA-MM] [--debug]
        eurl-frais quittance --month AAAA-MM [--payment-date AAAA-MM-JJ] [--issued-on AAAA-MM-JJ] [--output 'LOYER/...pdf']
 Exit codes: 0 complete, 3 incomplete (missing Orange invoice or receipt), 1 error, 2 configuration.
 Secrets stay in /volume1/docker/eurl-frais/.env and are never printed.
+
+Host version (terminal.backend=local): calls the host docker CLI directly, no `dk` helper container.
+The sandbox original is kept in ~/.hermes/sandboxes/docker/default/workspace/bin/eurl-frais.
 """
-import shlex
+import shutil
 import subprocess
 import sys
 
-args = " ".join(shlex.quote(arg) for arg in sys.argv[1:])
-command = f"cd /volume1/docker/eurl-frais && docker compose run --rm -T runner {args}"
-sys.exit(subprocess.call(["/workspace/bin/dk", command]))
+DOCKER = shutil.which("docker") or "/usr/bin/docker"
+PROJECT_DIR = "/volume1/docker/eurl-frais"
+
+sys.exit(subprocess.call([DOCKER, "compose", "run", "--rm", "-T", "runner", *sys.argv[1:]], cwd=PROJECT_DIR))

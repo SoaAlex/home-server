@@ -21,6 +21,7 @@ SHIM_IF=ph-shim
 SHIM_IP=192.168.1.56   # must be free AND outside the router's DHCP pool
 # Pinned MAC: `ip link add` generates a random one each boot, which would break
 # the router's static DHCP lease for SHIM_IP. 02:42 + IP in hex (0x38 = 56);
+# the 02 prefix marks it locally-administered, so it can't collide with a vendor OUI.
 SHIM_MAC=02:42:c0:a8:01:38
 PARENT=bridge0
 TARGETS="192.168.1.100"   # Pi-Hole; add more macvlan container IPs as needed
@@ -54,6 +55,7 @@ for t in $TARGETS; do
   ip route replace "$t/32" dev "$SHIM_IF"
 done
 
+echo "shim up: $SHIM_IF ($SHIM_IP) -> $TARGETS"
 for t in $TARGETS_V6; do
   ip -6 route replace "$t/128" dev "$SHIM_IF"
 done
