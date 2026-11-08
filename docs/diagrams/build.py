@@ -52,7 +52,7 @@ f.node("pub", 552, 256, 160, 80, "backend", "OCI", "Published apps", "vaultwarde
 f.node("priv", 552, 400, 160, 80, "backend", "OCI", "Private apps", "maison · code-server", "frigate · pi-hole", expo="PRIVATE")
 f.node("bkp", 808, 256, 160, 80, "store", "BKP", "nas-backup", "restic · 04:00", expo="PRIVATE")
 f.node("her", 808, 400, 160, 80, "backend", "AGENT", "Hermes agent", "gateway · dashboard", expo="PRIVATE")
-f.callout(1240, 560, ["Tailscale is off on purpose:", "remote access uses WireGuard or wss"], "M 1080 552 Q 760 560 456 470", (456, 470), anchor="end")
+f.callout(1240, 560, ["Remote access: WireGuard, or wss", "(wstunnel) where UDP is blocked"], "M 1080 552 Q 760 560 456 470", (456, 470), anchor="end")
 figs.append(("01-overview", "Overview", "Two doors open to the internet; everything else stays behind the router.",
              f.svg(LEG_EXPO + [("zone-accent", "open door"), ("forbid", "blocked"), ("arrow:link", "HTTP / API"), ("arrow:muted", "internal flow")])))
 
