@@ -84,16 +84,34 @@ function buildCities() {
     <div class="sep">Autres</div>${state.crit.other_cities.map(row).join("")}`;
 }
 
+// Fourchettes de surface (habitable, terrain). Un champ vide, nul ou non numérique ne pose aucune borne (0).
+// Le navigateur normalise la saisie d'un champ numérique (séparateur décimal de sa langue) : .value porte toujours un point.
+const bound = (sel) => { const n = parseFloat($(sel).value); return n > 0 ? n : 0; };
+// Surface telle que la carte l'affiche (eff : correction de l'agent, sinon colonne) ; null quand elle affiche « ? ». 0 reste une valeur.
+function surfaceValue(l, key) {
+  const v = eff(l, key);
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isNaN(n) ? null : n;
+}
+// "off" : aucune borne sur cette surface · "unknown" : borne posée, surface inconnue · "out" : hors fourchette · "ok".
+function surfaceStatus(v, min, max) {
+  if (!min && !max) return "off";
+  if (v == null) return "unknown";
+  return (min && v < min) || (max && v > max) ? "out" : "ok";
+}
+
 function filtered() {
   const q = norm($("#f-q").value);
   const maxPrice = (+$("#f-price").value || 0) * 1000 || Infinity;
-  const minScore = +$("#f-score").value, minLand = +$("#f-land").value || 0;
+  const minScore = +$("#f-score").value;
+  const surf = { min: bound("#f-surf-min"), max: bound("#f-surf-max") }, land = { min: bound("#f-land-min"), max: bound("#f-land-max") };
   const hideDisliked = $("#f-hide-disliked").checked;
   const ch = state.chips;
+  const hidden = { surf: 0, land: 0 };   // annonces écartées seulement parce qu'une surface est inconnue
   let out = state.all.filter((l) => {
     if ((l.score || 0) < minScore && !l.excluded_reason) return false;
     if ((eff(l, "price") || 0) > maxPrice) return false;
-    if (minLand && (+eff(l, "land_m2") || 0) < minLand) return false;
     const t = eff(l, "property_type");
     if (state.type && (state.type === "other" ? ["detached", "link_detached", "semi"].includes(t) : t !== state.type)) return false;
     if (state.dpe && (!eff(l, "dpe") || DPE.indexOf(eff(l, "dpe")) > DPE.indexOf(state.dpe))) return false;
@@ -109,8 +127,17 @@ function filtered() {
     if (ch.has("comments") && !l.comments_n) return false;
     if (hideDisliked && l.reaction === "dislike") return false;
     if (q && !norm([eff(l, "title"), eff(l, "city"), l.address, l.agency, l.source, l.comments_text].join(" ")).includes(q)) return false;
+    const s = surfaceStatus(surfaceValue(l, "surface_m2"), surf.min, surf.max);
+    const a = surfaceStatus(surfaceValue(l, "land_m2"), land.min, land.max);
+    if (s === "out" || a === "out") return false;
+    if (s === "unknown" || a === "unknown") {   // l'inconnue sous borne est écartée, et comptée pour chaque surface inconnue
+      hidden.surf += s === "unknown";
+      hidden.land += a === "unknown";
+      return false;
+    }
     return true;
   });
+  state.hidden = hidden;
   const key = {
     score: (l) => -(l.score || 0), price: (l) => eff(l, "price") || 9e9,
     ppm: (l) => (eff(l, "price") || 9e9) / (+eff(l, "surface_m2") || 1),
@@ -490,6 +517,16 @@ function markSeen(id) {
 }
 
 /* ---------- rendu ---------- */
+// Mentions sous les filtres de surface : annonces masquées parce que cette surface est inconnue (rien si 0 ou sans borne).
+const hiddenText = (n, what, known) => (n ? `${n} annonce${n > 1 ? "s" : ""} sans ${what} ${known} ${n > 1 ? "sont masquées" : "est masquée"}` : "");
+function renderSurfaceHints() {
+  const h = state.hidden || { surf: 0, land: 0 };
+  for (const [sel, text] of [["#f-surf-hint", hiddenText(h.surf, "surface habitable", "connue")], ["#f-land-hint", hiddenText(h.land, "terrain", "connu")]]) {
+    const el = $(sel);
+    el.textContent = text;
+    el.hidden = !text;
+  }
+}
 function render() {
   let route = location.hash || "#/";
   const detail = route.match(/^#\/l\/(\d+)/);
@@ -502,6 +539,7 @@ function render() {
   }
   state.rendered = true;
   const items = filtered();
+  renderSurfaceHints();
   $("#count").textContent = `${items.length} annonce${items.length > 1 ? "s" : ""}`;
   $$(".tabs a").forEach((a) => a.classList.toggle("active", a.dataset.route === route));
   const main = $("#main");

@@ -40,6 +40,9 @@ a { color: var(--accent); }
 .filters input[type=number] { padding: 7px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2); color: var(--text); width: 100%; }
 .filters input[type=range] { width: 100%; accent-color: var(--accent); }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.filters h4 .unit { text-transform: none; }
+.filters .hint { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.filters .hint[hidden] { display: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips button, .seg button { border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 5px 11px; cursor: pointer; font-size: 13px; }
 .chips button.on { background: var(--accent); border-color: var(--accent); color: #fff; }

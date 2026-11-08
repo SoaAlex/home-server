@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="light dark">
 <title>Maison — recherche</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="/static/style.css?v=12">
+<link rel="stylesheet" href="/static/style.css?v=13">
 <script>document.documentElement.dataset.theme = localStorage.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");</script>
 </head>
 <body>
@@ -44,9 +44,24 @@
       <h4>Score minimum <output id="o-score">0</output></h4>
       <input type="range" id="f-score" min="0" max="100" step="5" value="0">
     </section>
-    <section class="row2">
+    <section>
       <label>Prix max (k€)<input type="number" id="f-price" step="10" placeholder="550"></label>
-      <label>Terrain min (m²)<input type="number" id="f-land" step="50" placeholder="0"></label>
+    </section>
+    <section>
+      <h4><span>Surface habitable <span class="unit">(m²)</span></span></h4>
+      <div class="row2">
+        <label>Min<input type="number" id="f-surf-min" min="0" step="5" inputmode="decimal" placeholder="0" aria-label="Surface habitable minimum, en m²"></label>
+        <label>Max<input type="number" id="f-surf-max" min="0" step="5" inputmode="decimal" placeholder="sans limite" aria-label="Surface habitable maximum, en m²"></label>
+      </div>
+      <small class="hint" id="f-surf-hint" aria-live="polite" hidden></small>
+    </section>
+    <section>
+      <h4><span>Surface totale – terrain <span class="unit">(m²)</span></span></h4>
+      <div class="row2">
+        <label>Min<input type="number" id="f-land-min" min="0" step="50" inputmode="decimal" placeholder="0" aria-label="Surface totale du terrain minimum, en m²"></label>
+        <label>Max<input type="number" id="f-land-max" min="0" step="50" inputmode="decimal" placeholder="sans limite" aria-label="Surface totale du terrain maximum, en m²"></label>
+      </div>
+      <small class="hint" id="f-land-hint" aria-live="polite" hidden></small>
     </section>
     <section>
       <h4>Type</h4>
@@ -86,6 +101,6 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/static/app.js?v=12"></script>
+<script src="/static/app.js?v=13"></script>
 </body>
 </html>
