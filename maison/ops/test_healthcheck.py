@@ -309,5 +309,81 @@ class Duplicates(unittest.TestCase):
         self.assertEqual((P, W), ([], []))
 
 
+class TypeChecksAndAdjacency(unittest.TestCase):
+    """Change improve-adjacency-detection : file des vérifications de type, job maison-type-check, calculs IGN."""
+
+    def test_backlog_reported_without_stuck_alert(self):
+        f = green_facts()
+        f["db"]["type_checks"] = {"count": 300, "oldest_h": 30}
+        P, W, S, _ = run(f)
+        self.assertEqual((P, W), ([], []))
+        self.assertEqual(S["verifs_type"], 300)
+        self.assertIn("vérifications de type 300", hc.render(P, W, S))
+
+    def test_paused_job_with_waiting_requests_is_a_problem(self):
+        f = green_facts()
+        f["db"]["type_checks"] = {"count": 12, "oldest_h": 5}
+        f["jobs"][hc.TYPE_JOB].update(enabled=False, state="paused", paused_reason="test")
+        P, _, _, _ = run(f)
+        self.assertTrue(any(hc.TYPE_JOB in p and "pause" in p for p in P), P)
+
+    def test_missing_or_paused_job_without_requests_is_fine(self):
+        f = green_facts()
+        f["db"]["type_checks"] = {"count": 0, "oldest_h": None}
+        f["jobs"][hc.TYPE_JOB].update(enabled=False, state="paused")
+        self.assertEqual(run(f)[0], [])
+        del f["jobs"][hc.TYPE_JOB]
+        self.assertEqual(run(f)[0], [])
+
+    def test_old_type_request_warns(self):
+        f = green_facts()
+        f["db"]["type_checks"] = {"count": 4, "oldest_h": 9 * 24}
+        _, W, _, _ = run(f)
+        self.assertTrue(any("vérifications de type : 4" in w for w in W), W)
+
+    def test_adjacency_failure_rate_since_previous_check(self):
+        f = green_facts()
+        f["collector_log"]["adjacency_runs"] = [[NOW - 30 * H, 0, 40],            # avant le contrôle précédent
+                                                [NOW - 5 * H, 10, 5], [NOW - 2 * H, 2, 1]]
+        _, W, S, _ = run(f)
+        self.assertTrue(any("mitoyenneté : 6 calculs en échec sur 18" in w for w in W), W)
+        self.assertEqual(S["mitoyennete"], "12 calculées, 6 échecs")
+        f["collector_log"]["adjacency_runs"] = [[NOW - 5 * H, 40, 2]]
+        self.assertEqual(run(f)[1], [])
+
+    def test_parse_adjacency_log_line(self):
+        res = hc.parse_collector_log("2026-11-08T10:00:00.000000000Z 2026-11-08 11:00:00,000 INFO "
+                                     "mitoyenneté : 37 calculées, 3 échecs, 120 en attente\n")
+        self.assertEqual(res["adjacency_runs"][0][1:], [37, 3])
+
+    def test_adjacency_probe_404_before_deploy_is_a_warning(self):
+        f = green_facts()
+        f["relay"]["mitoyennete"] = {"ok": False, "detail": "HTTP 404: Not Found", "secs": 0.2}
+        P, W, _, _ = run(f)
+        self.assertEqual(P, [])
+        self.assertTrue(any("outil de mitoyenneté absent" in w for w in W), W)
+
+    def test_slow_adjacency_probe_has_its_own_threshold(self):
+        f = green_facts()
+        f["relay"]["mitoyennete"]["secs"] = 40
+        self.assertEqual(run(f)[1], [])
+        f["relay"]["mitoyennete"]["secs"] = 90
+        self.assertTrue(any("relais lent : mitoyennete" in w for w in run(f)[1]))
+
+    def test_type_job_never_run_is_only_a_warning(self):
+        f = green_facts()
+        f["db"]["type_checks"] = {"count": 400, "oldest_h": 2}
+        f["jobs"][hc.TYPE_JOB]["last_run_age_h"] = None
+        P, W, _, _ = run(f)
+        self.assertEqual(P, [])
+        self.assertTrue(any("jamais lancé" in w for w in W), W)
+
+    def test_adjacency_probe_failure_is_a_problem(self):
+        f = green_facts()
+        f["relay"]["mitoyennete"] = {"ok": False, "detail": "HTTP 502: WFS", "secs": 20}
+        P, _, _, _ = run(f)
+        self.assertTrue(any("relais en panne" in p and "mitoyennete" in p for p in P), P)
+
+
 if __name__ == "__main__":
     unittest.main()

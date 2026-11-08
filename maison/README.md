@@ -71,6 +71,61 @@ Tant que `--apply` n'a jamais été lancé, l'étape du collecteur est ignorée 
 Retour arrière complet : `UPDATE listing SET merged_into = NULL, cluster = NULL` (les données de chaque source sont
 restées dans leur ligne) puis redéploiement de l'image précédente.
 
+## Mitoyenneté (`app/adjacency.py`, `scoring.resolve_type`)
+Cinq catégories : individuelle (`detached`), accolée par le garage (`link_detached` : aucun mur habitable commun,
+liaison par un garage ou une annexe), semi (`semi`, un voisin habité), mitoyenne (`terraced`, deux voisins habités ou
+plus), inconnue.
+- **Sources et ordre de priorité** (un seul type retenu, côté serveur, pour le score, les filtres, l'alerte, la fiche
+  et l'agent) : 1. correction de l'utilisateur (fiche, menu « Corriger ») ; 2. agent avec preuves par côté
+  (`type_evidence`) ; 3. carte à adresse exacte, validée ou de la source ; 4. ancien verdict de l'agent ; 5. carte à
+  adresse probable ; 6. annonce : champ structuré (Netty), texte explicite, texte faible. La fiche affiche la source,
+  la confiance, un badge « sources en désaccord » et le détail (« Pourquoi ? ») ; `type_info` dans l'API.
+- **Texte** (`textparse.detect_type`) : « mitoyenne/jumelée par le garage » → par garage ; « semi-individuelle »,
+  « mitoyenne d'un côté », « jumelée » → semi ; « mitoyenne des deux côtés », « en bande » → mitoyenne ;
+  « individuelle » (sans « mitoyenne »), « 4 façades », « non mitoyenne » → individuelle ; « mitoyenne », « maison de
+  ville », « bel-étage » seuls → mitoyenne (indice faible). « Indépendante » et « villa » ne comptent plus.
+- **Calcul cartographique** : pour chaque bien à adresse précise, le collecteur interroge la Géoplateforme IGN
+  (BAN → BAN PLUS → BD TOPO bâtiments + Parcellaire Express, boîte de ±60 m), mesure les murs communs (≥ 2 m) avec les
+  bâtiments des parcelles voisines et distingue habitation et annexe (usage, construction légère, hauteur, surface).
+  Résultat dans `listing.adjacency` (catégorie, côtés vus de la rue, avertissements, géométrie). Au plus 40 calculs
+  par cycle, recalcul si l'adresse change, nouvel essai d'un échec après 6 h ; journal « mitoyenneté : … ».
+- **Fiche** : mini-carte « Plan » / « Photo aérienne » (IGN) + surcouche « Cadastre » (choix mémorisé), maison,
+  propriété, voisins et murs communs tracés (±3 m) ; vue de rue Panoramax orientée vers la maison (cache
+  `data/streetview/`, 180 jours) ; liens Google satellite / Street View (nouvel onglet, aucun contenu Google chargé).
+- **Vérification par l'agent** : file `GET /api/enrichment/type_checks` (`enrichment.type_request`, distincte de
+  l'enrichissement), job Hermes `maison-type-check` (`40 8-22 * * *`, 8 demandes par passage), bouton « Faire
+  vérifier » dans la fiche, demande « conflict » créée une fois quand la carte contredit l'agent sur un bien avec
+  garage. Outils : `maison pending --types N`, `maison planche ID`, `maison mitoyennete ID`,
+  `maison mitoyennete-adresse "ADRESSE"`, `maison rue ID`. L'API refuse (422) un `property_type` hors liste ou
+  incohérent avec les côtés.
+- **Rattrapage** (une fois, après la mise en service) — à blanc par défaut, rapport HTML autonome :
+```bash
+docker compose run --rm --no-deps collector python scripts/adjacency_backfill.py                    # à blanc -> data/reports/
+docker compose run --rm --no-deps collector python scripts/adjacency_backfill.py --apply            # applique (sans alerte)
+docker compose run --rm --no-deps collector python scripts/adjacency_backfill.py --request-checks   # demandes « garage »
+```
+  `--apply` est relançable (seuls les échecs sont recalculés) ; `--request-checks` est idempotent.
+- **Retour arrière** : image précédente, `UPDATE listing SET adjacency = NULL`,
+  `UPDATE listing SET enrichment = enrichment - 'type_request'`, job `maison-type-check` en pause, skill restaurée
+  depuis sa sauvegarde. Les verdicts de l'agent restent dans `enrichment`.
+
+## Commentaires
+Chaque fiche a un fil de commentaires datés et signés (bloc « 💬 Commentaires ») : ajout (`Ctrl+Entrée`),
+modification (mention « modifié »), suppression après confirmation. Texte brut de 1 à 2 000 caractères.
+- **Auteur** : choisi parmi `comment_authors` de `config/criteria.yaml` (ex. `[Alexandre, Marie]`), mémorisé dans
+  chaque navigateur (`localStorage["maison.author"]`). Sans liste, les commentaires n'ont pas d'auteur. Pas de
+  connexion : n'importe quel navigateur du LAN/VPN peut modifier ou supprimer un commentaire.
+- **Liste** : badge « 💬 N », puce « 💬 Commentées », la recherche porte aussi sur le texte des commentaires.
+- **Biens fusionnés** : un commentaire est rangé sur l'annonce principale ; la fiche réunit ceux de toutes les sources
+  du bien. Une source séparée retrouve les commentaires écrits sur elle avant la fusion. Une annonce commentée est
+  prioritaire pour devenir principale. Aucun effet sur le score, la réaction ni la file de l'agent.
+- **API** : `GET`/`POST /api/listings/{id}/comments` (`{author, body}`), `PATCH /api/comments/{cid}` (`{body}`),
+  `DELETE /api/comments/{cid}`. La fiche (`GET /api/listings/{id}`) renvoie `comments`, la liste `comments_n` et
+  `comments_text`. Table `listing_comment` (la colonne `user_note` n'est pas utilisée).
+- **Agent Hermes** : lecture seule. `user_comments` figure dans `/api/enrichment/pending`,
+  `/api/enrichment/type_checks` et `maison pending` ; la skill les traite comme des indices, jamais comme une preuve.
+  Toute écriture de commentaire portant l'en-tête `X-Token` est refusée (403).
+
 ## Santé quotidienne (`ops/healthcheck.py`)
 Contrôle en lecture seule lancé chaque matin (7 h 30) par un cron Hermes sans agent, message sur Discord :
 une ligne ✅ si tout va bien, sinon la liste des problèmes (🚨) et des points d'attention (⚠️).
@@ -87,8 +142,8 @@ python3 -m unittest discover -s ops               # tests (stdlib, sans Docker)
 État entre deux contrôles et historique : `~/.local/state/maison-health/`.
 
 ## Score (/100)
-Ville (25 → 11 selon rang, 5 si « autre ») · prix (≤400k 15, ≤450k 12, ≤500k 5) · type (indiv. 12,
-semi 7) · terrain (≥400 m² 12, ≥250 8, ≥150 4 ; −3 jardin en longueur) · DPE (A/B 8 … F/G −5) ·
+Ville (25 → 11 selon rang, 5 si « autre ») · prix (≤400k 15, ≤450k 12, ≤500k 5) · type (individuelle 12,
+accolée par le garage 10, semi 7, mitoyenne ou inconnue 2 ; type retenu, voir « Mitoyenneté ») · terrain (≥400 m² 12, ≥250 8, ≥150 4 ; −3 jardin en longueur) · DPE (A/B 8 … F/G −5) ·
 travaux (aucun 8, léger 3, lourd −8) · baignoire 3 · chambres (≥3 : 3, grande chambre ≥14 m² : 4) ·
 trajets voiture cumulés vers les destinations de `commute` (≤30 min 8, ≤40 5, ≤50 2) · style cubique −4.
 Exclusions : ville exclue / hors zone, prix > max, garage ou jardin **confirmés** absents.

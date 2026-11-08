@@ -92,6 +92,16 @@ def test_joining_listing_never_changes_existing_principal(dburl):
         assert dedupe.merge(conn, nt, bi, method="auto") == bi            # Netty rejoint : principale inchangée
 
 
+def test_commented_listing_wins_over_enriched_one(dburl):
+    """Spec merged-listings, « Annonce commentée » : un commentaire est une donnée utilisateur."""
+    with db.connect(dburl) as conn:
+        nt = add(conn, price=300000, ext="nt", source="netty")
+        sl = add(conn, price=300000, ext="sl", source="seloger")
+        conn.execute("UPDATE listing SET enrichment_status='done' WHERE id=%s", (nt,))
+        conn.execute("INSERT INTO listing_comment (listing_id, author, body) VALUES (%s, 'Marie', 'à voir')", (sl,))
+        assert dedupe.merge(conn, nt, sl, method="auto") == sl
+
+
 def test_user_validated_address_wins_principal_choice(dburl):
     with db.connect(dburl) as conn:
         nt = add(conn, price=300000, ext="nt", source="netty")

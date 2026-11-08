@@ -549,7 +549,7 @@ def _rank(r: dict) -> tuple:
     """Ordre de choix de l'annonce principale (spec merged-listings)."""
     enr = r.get("enrichment") or {}
     return (0 if enr.get("address_method") == "user" else 1,
-            0 if (r.get("reaction") or r.get("user_status") or r.get("user_note")) else 1,
+            0 if (r.get("reaction") or r.get("user_status") or r.get("user_note") or r.get("has_comments")) else 1,
             0 if r.get("enrichment_status") == "done" else 1,
             SOURCE_RANK.get(r.get("source"), 2), -len(r.get("photos") or []),
             r.get("first_seen") or datetime.max.replace(tzinfo=timezone.utc), r["id"])
@@ -603,7 +603,8 @@ def merge(conn, a: int, b: int, method: str = "user", evidence: dict | None = No
         return pa
     rows = {r["id"]: r for r in conn.execute(
         "SELECT id, source, merged_into, enrichment, enrichment_status, reaction, user_status, user_note, photos, "
-        "first_seen FROM listing WHERE id = ANY(%s) OR merged_into = ANY(%s)", ([pa, pb], [pa, pb]))}
+        "first_seen, EXISTS (SELECT 1 FROM listing_comment c WHERE c.listing_id = listing.id) AS has_comments "
+        "FROM listing WHERE id = ANY(%s) OR merged_into = ANY(%s)", ([pa, pb], [pa, pb]))}
     ma = [i for i, r in rows.items() if r["merged_into"] == pa]
     mb = [i for i, r in rows.items() if r["merged_into"] == pb]
     if ma and not mb:

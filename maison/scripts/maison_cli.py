@@ -3,7 +3,8 @@
 
 Évite curl + URL http + jeton en ligne de commande (bloqués par le scan de sécurité du cron).
   maison pending [--standard|--investigations|--types|--all] [N]
-                                      -> liste JSON des annonces en attente.
+                                      -> liste JSON des annonces en attente (user_comments = commentaires
+                                         de l'utilisateur : indices en lecture seule).
        --standard       file hors demandes d'investigation (job maison-enrichment) ; copie /tmp/pending.json
        --investigations demandes « Investiguer » (address_request), la plus ancienne d'abord (job
                         maison-address-investigation) ; copie /tmp/pending_investigations.json
@@ -121,25 +122,29 @@ def pending(args):
         if waiting:
             print(f"# {waiting} investigation(s) d'adresse en attente : traitées par le job "
                   "maison-address-investigation, ne pas les traiter ici", file=sys.stderr)
-    slim = []
-    for x in out[:n]:
-        keep = {k: x.get(k) for k in ("id", "source", "url", "title", "description", "price", "city",
-                                      "postal_code", "surface_m2", "land_m2", "rooms", "bedrooms", "dpe",
-                                      "lat", "lon", "geo_precision", "address", "excluded_reason",
-                                      "has_garage", "has_garden", "blur", "ges", "year_built",
-                                      "published_at", "agency")}
-        keep["address_request"] = (x.get("enrichment") or {}).get("address_request")
-        keep["address_investigations"] = (x.get("enrichment") or {}).get("address_investigations")
-        keep["photo_urls"] = (x.get("photo_urls") or [])[:8]
-        keep["type_info"] = x.get("type_info")
-        keep["adjacency"] = adjacency_summary(x.get("adjacency"))
-        if mode == "types":
-            enr = x.get("enrichment") or {}
-            keep.update(type_request=enr.get("type_request"), type_checks=enr.get("type_checks"),
-                        type_evidence=enr.get("type_evidence"), enrichment_status=x.get("enrichment_status"))
-        slim.append(keep)
+    slim = [slim_entry(x, mode) for x in out[:n]]
     write_pending_copy(slim, PENDING_COPY[mode])
     print(json.dumps(slim, ensure_ascii=False, indent=1))
+
+
+def slim_entry(x, mode="all"):
+    """Entrée allégée de la file : champs utiles à l'agent, photos tronquées, commentaires de l'utilisateur."""
+    keep = {k: x.get(k) for k in ("id", "source", "url", "title", "description", "price", "city",
+                                  "postal_code", "surface_m2", "land_m2", "rooms", "bedrooms", "dpe",
+                                  "lat", "lon", "geo_precision", "address", "excluded_reason",
+                                  "has_garage", "has_garden", "blur", "ges", "year_built",
+                                  "published_at", "agency")}
+    keep["address_request"] = (x.get("enrichment") or {}).get("address_request")
+    keep["address_investigations"] = (x.get("enrichment") or {}).get("address_investigations")
+    keep["photo_urls"] = (x.get("photo_urls") or [])[:8]
+    keep["type_info"] = x.get("type_info")
+    keep["adjacency"] = adjacency_summary(x.get("adjacency"))
+    keep["user_comments"] = x.get("user_comments") or []    # indices de l'utilisateur, jamais une preuve
+    if mode == "types":
+        enr = x.get("enrichment") or {}
+        keep.update(type_request=enr.get("type_request"), type_checks=enr.get("type_checks"),
+                    type_evidence=enr.get("type_evidence"), enrichment_status=x.get("enrichment_status"))
+    return keep
 
 
 def save_image(content, name):

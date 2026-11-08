@@ -81,7 +81,7 @@ main.maponly #list { display: none; }
 .tags { position: absolute; top: 10px; right: 10px; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: 70%; }
 .tag { background: #000000a6; color: #fff; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; backdrop-filter: blur(4px); }
 .tag.drop { background: var(--good); } .tag.new { background: #3b82f6; } .tag.bad { background: var(--bad); }
-.tag.src { background: #6d5bd0; } .tag.dup { background: var(--mid); }
+.tag.src { background: #6d5bd0; } .tag.dup { background: var(--mid); } .tag.com { background: #0e7490; }
 .fav { position: absolute; bottom: 10px; right: 10px; display: flex; gap: 6px; }
 .fav button { width: 34px; height: 34px; border-radius: 50%; border: 0; background: #ffffffe6; color: #333; cursor: pointer; font-size: 15px; box-shadow: var(--shadow); }
 .fav button.on { background: var(--accent); color: #fff; }
@@ -144,12 +144,47 @@ main.maponly #list { display: none; }
 .flags { margin: 8px 0 0; padding-left: 4px; list-style: none; } .flags li { margin: 3px 0; }
 .big-price { font-size: 28px; font-weight: 800; letter-spacing: -.02em; }
 .muted { color: var(--muted); }
-.minimap { height: 220px; border-radius: 10px; overflow: hidden; margin-top: 10px; }
+.minimap { height: 300px; border-radius: 10px; overflow: hidden; margin-top: 10px; }
+.minimap .leaflet-control-layers { font-size: 12px; line-height: 1.5; }
+.adj-legend { background: #ffffffe6; color: #18202a; padding: 4px 7px; border-radius: 6px; font-size: 11px; display: flex; flex-wrap: wrap; gap: 3px 9px; max-width: 230px; }
+.adj-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.adj-legend .muted { color: #555; }
+.street { margin-top: 10px; }
+.street img { width: 100%; border-radius: 10px; display: block; aspect-ratio: 3 / 2; object-fit: cover; background: var(--panel-2); }
+.type-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.src-pill { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); font-weight: 600; }
+.src-pill.high { background: #1f9d6b1f; color: var(--good); border-color: #1f9d6b55; }
+.src-pill.medium { background: #e29a1b1f; color: var(--mid); border-color: #e29a1b55; }
+.small-inline { font-size: 12px; font-weight: 400; }
+.type-why { margin: 6px 0 0; padding-left: 2px; list-style: none; font-size: 12.5px; font-weight: 400; }
+.type-why li { margin: 2px 0; } .type-why li.used { font-weight: 600; }
+.type-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
+.type-actions select { padding: 3px 6px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); font-size: 12.5px; }
 .trip { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; border-bottom: 1px dashed var(--border); }
 .trip:last-child { border: 0; }
 .addr-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .btn.sm { padding: 5px 10px; font-size: 12.5px; font-weight: 600; }
 .small { font-size: 12px; margin-top: 6px; }
+
+/* ---------- commentaires ---------- */
+.c-list { display: flex; flex-direction: column; gap: 10px; }
+.c-item { border-bottom: 1px dashed var(--border); padding-bottom: 8px; }
+.c-item:last-child { border: 0; padding-bottom: 0; }
+.c-meta { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; }
+.c-tools { margin-left: auto; display: flex; gap: 2px; opacity: .55; }
+.c-item:hover .c-tools { opacity: 1; }
+.c-tools .link { font-size: 14px; padding: 0 3px; }
+.c-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; margin-top: 2px; }
+.c-form { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.c-text { width: 100%; resize: vertical; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px;
+          background: var(--panel-2); color: var(--text); font: inherit; min-height: 42px; }
+.c-text:focus { outline: none; border-color: var(--accent); }
+.c-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.c-authors { margin-right: auto; align-items: center; }
+.c-authors .small { margin: 0 4px 0 0; }
+.c-authors.need { outline: 2px solid var(--mid); outline-offset: 3px; border-radius: 8px; }
+.c-authors.need .small { color: var(--mid); font-weight: 600; }
+.c-hint { margin: 0; }
 
 /* ---------- doublons : liens multi-sources, sources fusionnées, doublon possible ---------- */
 .offers { position: relative; }

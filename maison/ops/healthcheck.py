@@ -45,7 +45,8 @@ MAISON_DIR = Path("/volume1/docker/maison")
 API = os.environ.get("MAISON_URL", "http://127.0.0.1:8090").rstrip("/")
 CONTAINERS = ("maison-web", "maison-collector")
 EXPECTED_DNS = ["192.168.1.1", "8.8.8.8"]
-JOBS = ("maison-enrichment", "maison-address-investigation")
+JOBS = ("maison-enrichment", "maison-address-investigation", "maison-type-check")
+TYPE_JOB = "maison-type-check"   # file des vérifications de type : sans demande, son absence ou sa pause est sans effet
 MAIL_SOURCES = {"leboncoin", "seloger"}      # alimentées par les alertes e-mail : rythme irrégulier
 SWEEP_SOURCES = {"bienici", "notaires", "maes", "netty", "agences", "pap"}   # balayées à chaque cycle
 
@@ -60,6 +61,11 @@ BACKLOG_WARN = 45          # ≈ 3 passes de 15
 ENRICH_RUN_LATE_H = 26     # le job standard tourne de 8 h à 22 h : dernier tir la veille au soir
 INVESTIGATION_RUN_LATE_H = 26
 DISK_MIN_FREE = 3 * 1024**3
+ADJ_FAIL_RATE = 0.20       # calculs de mitoyenneté en échec depuis le contrôle précédent (au-delà : ⚠️)
+ADJ_FAIL_MIN = 5           # en dessous de 5 calculs, le taux n'est pas significatif
+TYPE_CHECK_OLD_H = 7 * 24  # l'arriéré initial (~410) s'écoule en ~4 jours : au-delà d'une semaine, la file traîne
+SLOW_S = {"mitoyennete": 75}   # BAN + 3 WFS IGN + vue aérienne : 15-45 s en temps normal
+ADJ_WITNESS = "19 avenue Georges Clemenceau 59130 Lambersart"   # mairie de Lambersart : adresse publique témoin
 LIMIT_MARKERS = re.compile(r"not processed|usage limit|rate.?limit|HTTP 429|session limit|CRON_FAILURE", re.I)
 
 PENDING_SQL_FILTER = ("status='active' AND enrichment_status='pending' AND merged_into IS NULL "
@@ -84,6 +90,12 @@ SELECT json_build_object(
                     WHERE enrichment_status='done' AND enriched_at > now() - interval '24 hours'
                       AND NOT enrichment ? 'summary_fr'),
  'new_24h', (SELECT count(*) FROM listing WHERE first_seen > now() - interval '24 hours'),
+ 'type_checks', (SELECT json_build_object('count', count(*), 'oldest_h',
+                     round((extract(epoch FROM now() - min((enrichment->'type_request'->>'requested_at')::timestamptz)) / 3600.0)::numeric, 2))
+                 FROM listing WHERE enrichment ? 'type_request' AND merged_into IS NULL
+                   AND (status='active' OR coalesce((cluster->>'active')::boolean, false))
+                   AND (excluded_reason IS NULL OR excluded_reason='à compléter')
+                   AND (reaction IS DISTINCT FROM 'dislike' OR enrichment->'type_request'->>'reason' = 'user')),
  'dup_pending', (SELECT json_build_object('count', count(*), 'oldest_h',
                      round((extract(epoch FROM now() - min(p.created_at)) / 3600.0)::numeric, 2))
                  FROM duplicate_pair p JOIN listing a ON a.id = p.id_a JOIN listing b ON b.id = p.id_b
@@ -169,6 +181,7 @@ RELAY_TESTS = {   # outil -> (arguments, validation du JSON)
     "ademe": (["ademe", "type_batiment:maison AND etiquette_dpe:C", "3.048,50.686,1500m"],
               lambda d: (d.get("total") or 0) > 0),
     "cadastre": (["cadastre", "3.048", "50.686", "40"], lambda d: (d.get("count") or 0) > 0),
+    "mitoyennete": (["mitoyennete-adresse", ADJ_WITNESS], lambda d: d.get("status") == "ok"),   # BAN + WFS IGN
 }
 
 
@@ -198,7 +211,7 @@ def docker_logs(name, since_h):
 
 def parse_collector_log(text):
     res = {"last_cycle_end": None, "source_errors": {}, "email_errors": 0, "cycle_errors": 0,
-           "zero_sources": {}, "postprocess_warnings": 0, "email_runs": 0}
+           "zero_sources": {}, "postprocess_warnings": 0, "email_runs": 0, "adjacency_runs": []}
     for line in text.splitlines():
         ts = parse_ts(line.split(" ", 1)[0])
         if "cycle terminé" in line:
@@ -215,6 +228,8 @@ def parse_collector_log(text):
             res["postprocess_warnings"] += 1
         elif re.search(r"INFO emails: \d+ annonces", line):
             res["email_runs"] += 1
+        elif m := re.search(r"mitoyenneté : (\d+) calculées, (\d+) échecs", line):
+            res["adjacency_runs"].append([ts, int(m.group(1)), int(m.group(2))])
     return res
 
 
@@ -366,12 +381,16 @@ def evaluate(f, state):
     if not f["cli_exists"]:
         P.append(f"commande `maison` absente pour le backend {f['backend']} ({f['cli']}) : les crons ne peuvent rien faire")
     bad = {t: r for t, r in f["relay"].items() if not r["ok"]}
+    if "HTTP 404" in (bad.get("mitoyennete") or {}).get("detail", ""):      # outil absent de l'image en service
+        bad.pop("mitoyennete")
+        W.append("outil de mitoyenneté absent de l'API (image maison antérieure au change improve-adjacency-detection ?)")
     if bad:
         by_detail = {}
         for t, r in bad.items():
             by_detail.setdefault(r["detail"] or "échec", []).append(t)
         P.append("relais en panne : " + " ; ".join(f"{', '.join(ts)} → {d}" for d, ts in by_detail.items()))
-    slow = [f"{t} {r['secs']} s" for t, r in f["relay"].items() if r["ok"] and r.get("secs", 0) > 30]
+    slow = [f"{t} {r['secs']} s" for t, r in f["relay"].items()
+            if r["ok"] and r.get("secs", 0) > SLOW_S.get(t, 30)]
     if slow:
         W.append("relais lent : " + ", ".join(slow))
 
@@ -398,6 +417,13 @@ def evaluate(f, state):
         W.append(f"collecteur : {src} a rendu 0 annonce {n} fois (source cassée ?)")
     if cl["postprocess_warnings"] > 20:
         W.append(f"collecteur : {cl['postprocess_warnings']} avertissements postprocess en 24 h")
+    since = state.get("last_check") or now - 24 * 3600
+    runs = [r for r in cl.get("adjacency_runs") or [] if (r[0] or 0) > since]
+    done, failed = sum(r[1] for r in runs), sum(r[2] for r in runs)
+    if done + failed >= ADJ_FAIL_MIN and failed / (done + failed) > ADJ_FAIL_RATE:
+        W.append(f"mitoyenneté : {failed} calculs en échec sur {done + failed} depuis le contrôle précédent "
+                 "(Géoplateforme IGN lente ou en panne ?)")
+    S["mitoyennete"] = f"{done} calculées, {failed} échecs"
 
     # --- base : fraîcheur des sources, file d'attente
     db = f["db"]
@@ -454,6 +480,10 @@ def evaluate(f, state):
     if dup.get("count") and (dup.get("oldest_h") or 0) > DUP_PENDING_WARN_H:
         W.append(f"{dup['count']} doublon(s) possible(s) à valider dans l'UI (filtre « Doublons à valider »), "
                  f"le plus ancien depuis {fmt_h(dup['oldest_h'])}")
+    tc = db.get("type_checks") or {}
+    if tc.get("count") and (tc.get("oldest_h") or 0) > TYPE_CHECK_OLD_H:
+        W.append(f"file des vérifications de type : {tc['count']} demande(s), la plus ancienne depuis {fmt_h(tc['oldest_h'])}")
+    S["verifs_type"] = tc.get("count", 0)
     new_state["queue_standard"] = len(std)
     S.update(enrichies_24h=enriched, file=len(std), investigations=len(inv),
              plus_ancienne_h=round(max((now - new_state["pending_first_seen"][str(q["id"])]) / 3600 for q in std), 2)
@@ -479,14 +509,19 @@ def evaluate(f, state):
         jobs = {}
     for name in JOBS:
         j = jobs.get(name)
+        idle = name == TYPE_JOB and not S.get("verifs_type")     # aucune demande : le job n'a rien à faire
         if j is None:
-            P.append(f"cron Hermes {name} introuvable")
+            if not idle:
+                P.append(f"cron Hermes {name} introuvable")
             continue
         if not j["enabled"] or j["state"] == "paused":
-            P.append(f"cron {name} en pause ({j['paused_reason'] or 'sans raison'}) : rien n'est traité")
+            if not idle:
+                P.append(f"cron {name} en pause ({j['paused_reason'] or 'sans raison'}) : rien n'est traité")
             continue
         late = ENRICH_RUN_LATE_H if name == "maison-enrichment" else INVESTIGATION_RUN_LATE_H
-        if j["last_run_age_h"] is None or j["last_run_age_h"] > late:
+        if j["last_run_age_h"] is None and name == TYPE_JOB:
+            W.append(f"cron {name} : jamais lancé pour l'instant (créé récemment ?)")
+        elif j["last_run_age_h"] is None or j["last_run_age_h"] > late:
             P.append(f"cron {name} : dernier tir il y a {fmt_h(j['last_run_age_h'])} (gateway arrêtée ?)")
         if j["last_status"] not in (None, "ok"):
             P.append(f"cron {name} : dernier tir en « {j['last_status']} » ({(j['last_error'] or '')[:120]})")
@@ -499,7 +534,7 @@ def evaluate(f, state):
         if silent:
             (P if silent >= 3 else W).append(
                 f"cron {name} : {silent} tir(s) sans réponse ou stoppé(s) par la limite de session en 24 h")
-        S[f"tirs_{'std' if name == 'maison-enrichment' else 'inv'}"] = j["completed_24h"]
+        S["tirs_" + {"maison-enrichment": "std", TYPE_JOB: "type"}.get(name, "inv")] = j["completed_24h"]
 
     if f.get("disk_free") is not None and f["disk_free"] < DISK_MIN_FREE:
         W.append(f"/volume1 : plus que {f['disk_free'] / 1024**3:.1f} Gio libres (base + photos)")
@@ -514,8 +549,9 @@ def render(P, W, S):
     stats = (f"collecteur : {cycle}, sources fraîches {S.get('sources_fraiches', '?')} · "
              f"{S.get('nouvelles_24h', '?')} nouvelles, {S.get('enrichies_24h', '?')} enrichies en 24 h · "
              f"file {S.get('file', '?')} ({attente}), "
-             f"investigations {S.get('investigations', '?')} · tirs cron 24 h : {S.get('tirs_std', '?')} std, "
-             f"{S.get('tirs_inv', '?')} inv")
+             f"investigations {S.get('investigations', '?')}, vérifications de type {S.get('verifs_type', '?')} · "
+             f"mitoyenneté {S.get('mitoyennete', '?')} · tirs cron 24 h : {S.get('tirs_std', '?')} std, "
+             f"{S.get('tirs_inv', '?')} inv, {S.get('tirs_type', '?')} type")
     if not P and not W:
         return f"✅ **Maison** — tout fonctionne · {stats}"
     head = (f"🚨 **Maison** — {len(P)} problème(s)" if P else "⚠️ **Maison** — rien de bloquant") + \

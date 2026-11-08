@@ -22,6 +22,8 @@ alert:
   min_score: 75
   max_price: 400000
   require_confirmed_garage_garden: true
+# Auteurs proposés pour les commentaires des fiches (vide ou absent : commentaires sans auteur)
+comment_authors: [Alexandre, Marie]
 zones: {}
 # Agences sur le CMS Netty (app/sources/netty.py). username = img.netty.immo/productcw/<username>/…
 # Même `group` = même portefeuille partagé (annonces dédoublonnées).

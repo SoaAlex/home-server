@@ -107,3 +107,15 @@ ALTER TABLE listing ADD COLUMN IF NOT EXISTS property_type_src TEXT;
 -- File des vérifications de type par l'agent (enrichment.type_request), hors enrichment_status.
 CREATE INDEX IF NOT EXISTS listing_type_request_idx ON listing ((enrichment ? 'type_request'))
     WHERE enrichment ? 'type_request';
+
+-- Commentaires de l'utilisateur (change OpenSpec add-listing-comments). Rangés sur l'annonce visée à l'écriture
+-- (la principale du groupe) ; lus par groupe. La fusion ne déplace rien : une source séparée garde les siens.
+CREATE TABLE IF NOT EXISTS listing_comment (
+    id         BIGSERIAL PRIMARY KEY,
+    listing_id BIGINT NOT NULL REFERENCES listing(id) ON DELETE CASCADE,
+    author     TEXT,
+    body       TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 2000),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS listing_comment_listing_idx ON listing_comment (listing_id, created_at);

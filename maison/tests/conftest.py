@@ -7,6 +7,6 @@ from app import db
 def dburl():
     url = os.environ["TEST_DATABASE_URL"]
     with db.connect(url) as conn:
-        conn.execute("DROP TABLE IF EXISTS listing_photo, duplicate_pair, listing CASCADE")
+        conn.execute("DROP TABLE IF EXISTS listing_comment, listing_photo, duplicate_pair, listing CASCADE")
     db.init_schema(url)
     return url

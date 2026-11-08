@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="light dark">
 <title>Maison — recherche</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="/static/style.css?v=11">
+<link rel="stylesheet" href="/static/style.css?v=12">
 <script>document.documentElement.dataset.theme = localStorage.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");</script>
 </head>
 <body>
@@ -38,6 +38,7 @@
       <button data-chip="visit">🗓 À visiter</button>
       <button data-chip="new">Nouveautés 48 h</button>
       <button data-chip="dups" title="Annonces avec un doublon possible à valider">Doublons à valider</button>
+      <button data-chip="comments" title="Annonces avec au moins un commentaire">💬 Commentées</button>
     </div>
     <section>
       <h4>Score minimum <output id="o-score">0</output></h4>
@@ -51,7 +52,8 @@
       <h4>Type</h4>
       <div class="seg" id="f-type">
         <button data-v="" class="on">Tous</button><button data-v="detached">Individuelle</button>
-        <button data-v="semi">Semi</button><button data-v="other">Autre</button>
+        <button data-v="link_detached" title="Accolée par le garage">Par garage</button>
+        <button data-v="semi">Semi</button><button data-v="other" title="Mitoyenne ou inconnue">Autre</button>
       </div>
     </section>
     <section>
@@ -84,6 +86,6 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/static/app.js?v=11"></script>
+<script src="/static/app.js?v=12"></script>
 </body>
 </html>

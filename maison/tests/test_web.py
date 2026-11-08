@@ -486,3 +486,50 @@ def test_contact_sheet_numbers_up_to_12_local_photos(client, dburl, monkeypatch,
                                             headers={"X-Token": "tok"}).content)).size == (960, 540)   # 12 au plus
     nophoto = client.get(f"/api/listings/{other}/contact_sheet.jpg", headers={"X-Token": "tok"})
     assert nophoto.status_code == 404 and "aucune photo locale" in nophoto.json()["detail"]
+
+
+# ---------- auteurs des commentaires (change add-listing-comments) ----------
+BASE_CRIT = {"price": {}, "preferred_cities": [], "other_cities": [], "commute": {}, "alert": {}}
+
+
+def test_criteria_exposes_comment_authors(client, monkeypatch):
+    monkeypatch.setattr(settings, "load_criteria", lambda *a: {**BASE_CRIT, "comment_authors": ["Alexandre", "Marie"]})
+    assert client.get("/api/criteria").json()["comment_authors"] == ["Alexandre", "Marie"]
+
+
+def test_criteria_without_comment_authors(client, monkeypatch):
+    monkeypatch.setattr(settings, "load_criteria", lambda *a: dict(BASE_CRIT))
+    assert client.get("/api/criteria").json()["comment_authors"] == []
+
+
+# ---------- commentaires dans les files de l'agent (change add-listing-comments) ----------
+def _comment(dburl, lid, body, author="Marie"):
+    with db.connect(dburl) as conn:
+        conn.execute("INSERT INTO listing_comment (listing_id, author, body) VALUES (%s, %s, %s)", (lid, author, body))
+
+
+def test_pending_exposes_user_comments(client, dburl):
+    pend = client.get("/api/enrichment/pending", headers={"X-Token": "tok"}).json()
+    assert pend and all(x["user_comments"] == [] for x in pend)
+    a = next(x["id"] for x in pend if x["url"] == "https://e/a")
+    _comment(dburl, a, "La maison est au bout de l'impasse")
+    entry = next(x for x in client.get("/api/enrichment/pending", headers={"X-Token": "tok"}).json() if x["id"] == a)
+    assert [(c["author"], c["body"]) for c in entry["user_comments"]] == [("Marie", "La maison est au bout de l'impasse")]
+    assert entry["user_comments"][0]["created_at"] and "id" not in entry["user_comments"][0]
+
+
+def test_pending_comments_of_group_and_no_member(client, dburl):
+    p, m = _merged_pair(dburl)
+    _comment(dburl, m, "écrit sur la carte avant fusion")
+    _comment(dburl, p, "écrit sur la principale", author="Alexandre")
+    pend = {x["id"]: x for x in client.get("/api/enrichment/pending?limit=50", headers={"X-Token": "tok"}).json()}
+    assert m not in pend and {c["body"] for c in pend[p]["user_comments"]} == {"écrit sur la carte avant fusion",
+                                                                                 "écrit sur la principale"}
+
+
+def test_type_checks_expose_user_comments(client, dburl):
+    a = next(x["id"] for x in client.get("/api/listings").json() if x["url"] == "https://e/a")
+    client.post(f"/api/listings/{a}/type_request", json={"note": "voir le garage"})
+    _comment(dburl, a, "Garage accolé au voisin")
+    q = client.get("/api/enrichment/type_checks", headers={"X-Token": "tok"}).json()
+    assert [c["body"] for c in next(x for x in q if x["id"] == a)["user_comments"]] == ["Garage accolé au voisin"]

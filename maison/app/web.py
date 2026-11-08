@@ -45,7 +45,14 @@ def index(request: Request):
 @app.get("/api/criteria")
 def criteria():
     c = settings.load_criteria()
-    return {k: c[k] for k in ("price", "preferred_cities", "other_cities", "commute", "alert")}
+    return {**{k: c[k] for k in ("price", "preferred_cities", "other_cities", "commute", "alert")},
+            "comment_authors": comment_authors(c)}
+
+
+def comment_authors(crit: dict | None = None) -> list[str]:
+    """Auteurs autorisés des commentaires (`comment_authors` de criteria.yaml) ; liste vide = sans auteur."""
+    c = crit if crit is not None else settings.load_criteria()
+    return [str(a).strip() for a in (c.get("comment_authors") or []) if str(a).strip()]
 
 
 # Doublons possibles en attente, comptés par annonce principale (une paire peut relier deux secondaires).
@@ -56,7 +63,11 @@ WITH pend AS (
   WHERE p.status = 'suggested'),
 dup AS (
   SELECT x AS dup_lid, count(*) AS dup_n FROM (
-    SELECT pa AS x FROM pend WHERE pa <> pb UNION ALL SELECT pb FROM pend WHERE pa <> pb) t GROUP BY x)
+    SELECT pa AS x FROM pend WHERE pa <> pb UNION ALL SELECT pb FROM pend WHERE pa <> pb) t GROUP BY x),
+cm AS (   -- commentaires comptés par bien : ceux des secondaires reviennent à leur principale
+  SELECT coalesce(l.merged_into, l.id) AS cm_lid, count(*) AS comments_n,
+         string_agg(c.body, ' ' ORDER BY c.created_at, c.id) AS comments_text
+  FROM listing_comment c JOIN listing l ON l.id = c.listing_id GROUP BY 1)
 """
 ACTIVE_SQL = "(status = 'active' OR coalesce((cluster->>'active')::boolean, false))"
 
@@ -80,8 +91,9 @@ def listings(show_excluded: int = 0, include_gone: int = 0, dups: int = 0):
         where.append("dup_n > 0")
     with db.connect() as conn:
         rows = conn.execute(f"{DUP_PENDING_CTE} SELECT {COLS}, description, adjacency - 'geometry' AS adjacency, "
-                            "coalesce(dup_n, 0) AS dup_pending FROM listing "
-                            f"LEFT JOIN dup ON dup_lid = listing.id WHERE {' AND '.join(where)} "
+                            "coalesce(dup_n, 0) AS dup_pending, coalesce(comments_n, 0) AS comments_n, comments_text "
+                            "FROM listing LEFT JOIN dup ON dup_lid = listing.id LEFT JOIN cm ON cm_lid = listing.id "
+                            f"WHERE {' AND '.join(where)} "
                             "ORDER BY score DESC NULLS LAST, first_seen DESC").fetchall()
     return [{k: v for k, v in _view(r).items() if k != "description"} for r in rows]
 
@@ -132,7 +144,8 @@ def listing(lid: int):
             return row
         members = conn.execute(f"SELECT {SUMMARY_COLS} FROM listing WHERE merged_into=%s ORDER BY id", (lid,)).fetchall()
         group = [lid] + [m["id"] for m in members]
-        return {**_view(row), "members": [_summary(m) for m in members], "suggestions": _suggestions(conn, group)}
+        return {**_view(row), "members": [_summary(m) for m in members], "suggestions": _suggestions(conn, group),
+                "comments": group_comments(conn, [lid]).get(lid, [])}
 
 
 def _rescore(conn, ids, refresh_ids=()):
@@ -220,6 +233,100 @@ def set_reaction(lid: int, body: dict):
     return {"id": lid, "reaction": reaction}
 
 
+# ---------- commentaires de l'utilisateur (change add-listing-comments) ----------
+COMMENT_COLS = "c.id, c.listing_id, c.author, c.body, c.created_at, c.updated_at"
+COMMENT_MAX = 2000
+
+
+def group_comments(conn, principals: list[int]) -> dict[int, list[dict]]:
+    """Commentaires des groupes de ces annonces principales (secondaires comprises), par ordre chronologique."""
+    out = {p: [] for p in principals}
+    if not principals:
+        return out
+    for r in conn.execute(f"SELECT {COMMENT_COLS}, coalesce(l.merged_into, l.id) AS pid FROM listing_comment c "
+                          "JOIN listing l ON l.id = c.listing_id WHERE coalesce(l.merged_into, l.id) = ANY(%s) "
+                          "ORDER BY c.created_at, c.id", (list(principals),)):
+        out.setdefault(r.pop("pid"), []).append(r)
+    return out
+
+
+def _agent_comments(conn, rows) -> dict[int, list[dict]]:
+    """Commentaires des annonces (principales) d'un lot de la file, en une requête : indices pour l'agent."""
+    return {pid: [{k: c[k] for k in ("author", "body", "created_at", "updated_at")} for c in cs]
+            for pid, cs in group_comments(conn, [r["id"] for r in rows]).items()}
+
+
+def _user_only(x_token):
+    """L'agent lit les commentaires mais n'en écrit jamais : toute écriture portant X-Token est refusée."""
+    if x_token is not None:
+        raise HTTPException(403, "commentaires : écriture réservée à l'utilisateur (l'agent est en lecture seule)")
+
+
+def _comment_text(body) -> str:
+    text = (body or {}).get("body")
+    text = text.strip() if isinstance(text, str) else ""
+    if not 1 <= len(text) <= COMMENT_MAX:
+        raise HTTPException(400, f"body = texte de 1 à {COMMENT_MAX} caractères")
+    return text
+
+
+def _comment_author(body):
+    author = (body or {}).get("author")
+    author = author.strip() if isinstance(author, str) else author
+    allowed = comment_authors()
+    if allowed and author not in allowed:
+        raise HTTPException(400, f"author = {' | '.join(allowed)}")
+    if not allowed and author:
+        raise HTTPException(400, "aucun auteur configuré (comment_authors) : author doit être vide")
+    return author or None
+
+
+@app.get("/api/listings/{lid}/comments")
+def list_comments(lid: int):
+    with db.connect() as conn:
+        try:
+            pid = dedupe.principal_of(conn, lid)
+        except LookupError:
+            raise HTTPException(404)
+        return group_comments(conn, [pid])[pid]
+
+
+@app.post("/api/listings/{lid}/comments", status_code=201)
+def add_comment(lid: int, body: dict, x_token: str = Header(None)):
+    """Nouveau commentaire, rangé sur l'annonce principale du bien (même si `lid` est une source fusionnée)."""
+    _user_only(x_token)
+    text, author = _comment_text(body), _comment_author(body)
+    with db.connect() as conn:
+        try:
+            pid = dedupe.principal_of(conn, lid)
+        except LookupError:
+            raise HTTPException(404)
+        return conn.execute("INSERT INTO listing_comment AS c (listing_id, author, body) VALUES (%s, %s, %s) "
+                            f"RETURNING {COMMENT_COLS}", (pid, author, text)).fetchone()
+
+
+@app.patch("/api/comments/{cid}")
+def edit_comment(cid: int, body: dict, x_token: str = Header(None)):
+    """Nouveau texte ; l'auteur et la date de création ne changent pas."""
+    _user_only(x_token)
+    text = _comment_text(body)
+    with db.connect() as conn:
+        row = conn.execute(f"UPDATE listing_comment AS c SET body=%s, updated_at=now() WHERE id=%s "
+                           f"RETURNING {COMMENT_COLS}", (text, cid)).fetchone()
+    if not row:
+        raise HTTPException(404)
+    return row
+
+
+@app.delete("/api/comments/{cid}", status_code=204)
+def delete_comment(cid: int, x_token: str = Header(None)):
+    _user_only(x_token)
+    with db.connect() as conn:
+        if not conn.execute("DELETE FROM listing_comment WHERE id=%s RETURNING id", (cid,)).fetchone():
+            raise HTTPException(404)
+    return Response(status_code=204)
+
+
 def _refresh(conn, lid):
     """Recalcule trajets + score après un changement de position."""
     crit = settings.load_criteria()
@@ -303,7 +410,8 @@ def type_checks(limit: int = 8, x_token: str = Header(None)):
             "AND (reaction IS DISTINCT FROM 'dislike' OR enrichment->'type_request'->>'reason' = 'user') "
             "ORDER BY score DESC NULLS LAST, enrichment->'type_request'->>'requested_at', id LIMIT %s",
             (limit,)).fetchall()
-    return [{**r, "type_info": type_info(r)} for r in rows]
+        comments = _agent_comments(conn, rows)
+    return [{**r, "type_info": type_info(r), "user_comments": comments[r["id"]]} for r in rows]
 
 
 def _type_check_entry(old: dict, body: dict) -> dict:
@@ -392,7 +500,8 @@ def pending(limit: int = 5, x_token: str = Header(None)):
             "AND (reaction IS DISTINCT FROM 'dislike' OR enrichment ? 'address_request') "
             "ORDER BY (enrichment ? 'address_request') DESC, (first_seen > now() - interval '48 hours') DESC, score DESC NULLS LAST, first_seen DESC LIMIT %s",
             (limit,)).fetchall()
-    return [{**r, "type_info": type_info(r)} for r in rows]
+        comments = _agent_comments(conn, rows)
+    return [{**r, "type_info": type_info(r), "user_comments": comments[r["id"]]} for r in rows]
 
 
 @app.get("/api/tools/ademe")

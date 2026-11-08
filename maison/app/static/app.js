@@ -5,7 +5,10 @@ const state = { all: [], crit: null, map: null, layer: null, markers: {}, chips:
                 cities: new Set(), photos: [], photoIdx: 0, lastRoute: "#/", openId: null };
 const DPE = "ABCDEFG";
 const DPE_COL = { A: "#009c6d", B: "#52b153", C: "#a5cc74", D: "#e0c90c", E: "#f0b50f", F: "#eb8235", G: "#d7221f" };
-const TYPES = { detached: "Individuelle", semi: "Semi-individuelle", terraced: "Mitoyenne", unknown: "Type inconnu" };
+const TYPES = { detached: "Individuelle", link_detached: "Accolée par le garage", semi: "Semi-individuelle",
+                terraced: "Mitoyenne", unknown: "Type inconnu" };
+const TYPE_SRC = { user: "utilisateur", agent: "agent", map: "carte", listing: "annonce" };
+const TYPE_CONF = { high: "sûr", medium: "probable", low: "incertain" };
 const STYLES = { traditional: "traditionnelle", modern: "moderne", cubic: "cubique", mixed: "mixte" };
 const SHAPES = { square: "carré", long: "en longueur", irregular: "irrégulier", unknown: "forme ?" };
 const WORKS = { none: "aucun", light: "rafraîchissement", heavy: "travaux importants" };
@@ -14,7 +17,9 @@ const SCORE_MAX = { ville: 25, prix: 15, type: 12, jardin: 12, dpe: 8, travaux: 
 const fmt = (n) => (n == null || n === "" || isNaN(n) ? "?" : Math.round(Number(n)).toLocaleString("fr-FR"));
 // Valeur affichée : prix retenu d'un bien multi-sources (offre active la moins chère), sinon enrichissement de
 // l'agent puis colonnes (l'API a déjà complété les colonnes vides avec les autres sources du bien).
+// Le type est arbitré côté serveur (type_info : utilisateur > agent avec preuves > carte > …), jamais recalculé ici.
 const eff = (l, k) => (k === "price" && l.cluster && l.cluster.price ? l.cluster.price.value
+  : k === "property_type" && l.type_info ? l.type_info.type
   : l.enrichment && l.enrichment[k] != null ? l.enrichment[k] : l[k]);
 const SOURCES = { bienici: "Bien'ici", seloger: "SeLoger", leboncoin: "LeBonCoin", pap: "PAP", netty: "Netty",
                   maes: "Maes", notaires: "Notaires", agences: "Agence" };
@@ -26,6 +31,8 @@ const scoreCol = (s) => (s >= 75 ? "var(--good)" : s >= 55 ? "var(--mid)" : "var
 const scoreHex = (s) => (s >= 75 ? "#1f9d6b" : s >= 55 ? "#e29a1b" : "#8a94a3");
 const isNew = (l) => !l.seen_at && Date.now() - new Date(l.first_seen) < 48 * 3600e3;
 const dests = () => (state.crit && state.crit.commute && state.crit.commute.destinations) || {};
+const authors = () => (state.crit && state.crit.comment_authors) || [];
+const when = (d) => new Date(d).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" });
 
 function norm(s) {
   return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/œ/gi, "oe").toLowerCase().trim();
@@ -88,7 +95,7 @@ function filtered() {
     if ((eff(l, "price") || 0) > maxPrice) return false;
     if (minLand && (+eff(l, "land_m2") || 0) < minLand) return false;
     const t = eff(l, "property_type");
-    if (state.type && (state.type === "other" ? ["detached", "semi"].includes(t) : t !== state.type)) return false;
+    if (state.type && (state.type === "other" ? ["detached", "link_detached", "semi"].includes(t) : t !== state.type)) return false;
     if (state.dpe && (!eff(l, "dpe") || DPE.indexOf(eff(l, "dpe")) > DPE.indexOf(state.dpe))) return false;
     if (state.cities.size && !state.cities.has(lKey(l))) return false;
     if (ch.has("garage") && eff(l, "has_garage") !== true) return false;
@@ -99,8 +106,9 @@ function filtered() {
     if (ch.has("visit") && l.user_status !== "to_visit") return false;
     if (ch.has("new") && !isNew(l)) return false;
     if (ch.has("dups") && !l.dup_pending) return false;
+    if (ch.has("comments") && !l.comments_n) return false;
     if (hideDisliked && l.reaction === "dislike") return false;
-    if (q && !norm([eff(l, "title"), eff(l, "city"), l.address, l.agency, l.source].join(" ")).includes(q)) return false;
+    if (q && !norm([eff(l, "title"), eff(l, "city"), l.address, l.agency, l.source, l.comments_text].join(" ")).includes(q)) return false;
     return true;
   });
   const key = {
@@ -123,6 +131,7 @@ function card(l) {
     (l.cluster ? l.cluster.price_drop : l.price_history && l.price_history.length) ? `<span class="tag drop">↘ Baisse</span>` : "",
     offers(l).length > 1 ? `<span class="tag src" title="${esc(offers(l).map((o) => srcLabel(o.source)).join(", "))}">${offers(l).length} sources</span>` : "",
     l.dup_pending ? `<span class="tag dup" title="Doublon possible à valider">Doublon ?</span>` : "",
+    l.comments_n ? `<span class="tag com" title="${esc((l.comments_text || "").slice(0, 160))}">💬 ${l.comments_n}</span>` : "",
     l.excluded_reason ? `<span class="tag bad">${esc(l.excluded_reason)}</span>` : "",
     l.enrichment_status === "done" ? `<span class="tag" title="Analysée par l'agent">✦ analysée</span>` : "",
   ].join("");
@@ -230,6 +239,158 @@ function sourcesBox(l) {
     ${o.principal ? `<span class="muted small">principale</span>` : `<button class="btn ghost sm" data-split="${o.id}" data-id="${l.id}" title="Ce n'est pas le même bien">Séparer</button>`}
   </div>`).join("")}</div>`;
 }
+/* ---------- type retenu (arbitré par l'API) ---------- */
+function typeBlock(l) {
+  const ti = l.type_info || { type: eff(l, "property_type") || "unknown", verdicts: [] };
+  const e = l.enrichment || {}, vs = ti.verdicts || [];
+  const against = vs.filter((v) => v.disagrees);
+  const src = ti.source ? `<span class="src-pill ${esc(ti.confidence)}" title="confiance : ${esc(TYPE_CONF[ti.confidence] || ti.confidence)}">${esc(TYPE_SRC[ti.source] || ti.source)}</span>` : "";
+  const detail = (vs.find((v) => v.used) || {}).detail;
+  const opts = [["", "Automatique"], ...Object.entries(TYPES).map(([k, v]) => [k, k === "unknown" ? "Inconnu" : v])];
+  const userVal = e.property_type_user || "";
+  return `<div class="type-line"><b>${esc(TYPES[ti.type] || "?")}</b>${src}${detail ? ` <span class="muted small-inline">${esc(detail)}</span>` : ""}
+      ${against.length ? `<span class="b mid" title="${esc(against.map((v) => `${v.source_label} : ${v.label}`).join(" · "))}">⚠️ sources en désaccord : ${against.map((v) => `${esc(v.source_label)} → ${esc(v.label)}`).join(", ")}</span>` : ""}
+      ${vs.length ? `<button class="link" data-type-why>Pourquoi ?</button>` : ""}</div>
+    <ul class="type-why" hidden>${vs.map((v) => `<li class="${v.used ? "used" : ""}">${v.used ? "✔" : v.disagrees ? "⚠️" : "·"} <b>${esc(v.source_label)}</b> : ${esc(v.label)} <span class="muted">— ${esc(v.detail)}</span></li>`).join("")}</ul>
+    <div class="type-actions"><label class="muted small-inline">Corriger :
+        <select data-type-fix="${l.id}">${opts.map(([k, v]) => `<option value="${k}" ${k === userVal ? "selected" : ""}>${esc(v)}</option>`).join("")}</select></label>
+      ${e.type_request ? `<span class="b mid" title="${esc(e.type_request.note || "")}">🔎 vérification demandée</span>`
+        : `<button class="btn ghost sm" data-type-check="${l.id}" title="L'agent regarde les photos, la vue de rue et la vue aérienne, côté par côté">🔎 Faire vérifier</button>`}</div>`;
+}
+
+/* ---------- mini-carte : fonds IGN, cadastre, bâtiments du calcul cartographique ---------- */
+const IGN = (layer, style, fmt) => `https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layer}` +
+  `&STYLE=${encodeURIComponent(style)}&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=${fmt}`;
+const ADJ_STYLE = {
+  parcel: { color: "#ffffff", weight: 2, dashArray: "4 3", fillOpacity: 0 },
+  target: { color: "#1d4ed8", weight: 2, fillColor: "#3b82f6", fillOpacity: 0.45 },
+  property: { color: "#0891b2", weight: 2, fillColor: "#22d3ee", fillOpacity: 0.35 },
+  neighbour_main: { color: "#b91c1c", weight: 2, fillColor: "#ef4444", fillOpacity: 0.35 },
+  neighbour_annex: { color: "#c2410c", weight: 2, fillColor: "#fb923c", fillOpacity: 0.35 },
+  shared_wall: { color: "#d946ef", weight: 6, opacity: 0.95 },
+};
+const ADJ_LEGEND = [["target", "maison"], ["property", "propriété"], ["neighbour_main", "voisin habité"],
+  ["neighbour_annex", "annexe voisine"], ["shared_wall", "mur commun"]];
+const ADJ_WHY = { imprecise_position: "adresse imprécise", no_address: "pas d'adresse", low_confidence: "adresse trop incertaine" };
+function adjNote(l) {   // pourquoi aucun bâtiment n'est tracé
+  const a = l.adjacency, exact = l.geo_precision === "exact";
+  if (!exact) return "⚠️ Maison non localisée : la carte est centrée sur une position approximative.";
+  if (!a) return "Calcul de la mitoyenneté en attente (prochain cycle du collecteur).";
+  if (a.status === "not_applicable") return `Pas de calcul de mitoyenneté : ${ADJ_WHY[a.reason] || a.reason || "adresse imprécise"}.`;
+  if (a.status === "error") return "Calcul de la mitoyenneté en échec (nouvel essai dans 6 h).";
+  if (a.status === "no_building") return "Aucun bâtiment trouvé à cette adresse dans la BD TOPO.";
+  return "";
+}
+function miniMap(l) {
+  let pref = {};
+  try { pref = JSON.parse(localStorage["maison.minimap"] || "{}"); } catch (e) { pref = {}; }
+  const plan = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 21, maxNativeZoom: 19, attribution: "© OpenStreetMap" });
+  const ortho = L.tileLayer(IGN("ORTHOIMAGERY.ORTHOPHOTOS", "normal", "image/jpeg"), { maxZoom: 21, maxNativeZoom: 19, attribution: "© IGN" });
+  const cadastre = L.tileLayer(IGN("CADASTRALPARCELS.PARCELLAIRE_EXPRESS", "PCI vecteur", "image/png"), { maxZoom: 21, maxNativeZoom: 19, attribution: "© IGN" });
+  const exact = l.geo_precision === "exact";
+  const mm = L.map("minimap", { zoomControl: true, attributionControl: true, maxZoom: 21, layers: [pref.base === "ortho" ? ortho : plan] })
+    .setView([l.lat, l.lon], l.geo_precision === "city" ? 13 : exact ? 17 : 15);
+  mm.attributionControl.setPrefix(false);
+  if (pref.cadastre) cadastre.addTo(mm);
+  L.control.layers({ Plan: plan, "Photo aérienne": ortho }, { Cadastre: cadastre }, { collapsed: false, position: "topright" }).addTo(mm);
+  const save = () => { localStorage["maison.minimap"] = JSON.stringify({ base: mm.hasLayer(ortho) ? "ortho" : "plan", cadastre: mm.hasLayer(cadastre) }); };
+  mm.on("baselayerchange overlayadd overlayremove", save);
+  const geo = exact && l.adjacency && l.adjacency.geometry;
+  if (geo && geo.features && geo.features.length) {
+    const g = L.geoJSON(geo, { style: (f) => ADJ_STYLE[f.properties.role] || {}, interactive: false }).addTo(mm);
+    g.eachLayer((x) => { if (x.feature.properties.role === "shared_wall") x.bringToFront(); });
+    mm.fitBounds(g.getBounds(), { padding: [18, 18], maxZoom: 20 });
+    const legend = L.control({ position: "bottomleft" });
+    legend.onAdd = () => {
+      const d = L.DomUtil.create("div", "adj-legend");
+      d.innerHTML = ADJ_LEGEND.map(([r, t]) => `<span><i style="background:${ADJ_STYLE[r].fillColor || ADJ_STYLE[r].color}"></i>${t}</span>`).join("") + `<span class="muted">tracés ±3 m</span>`;
+      return d;
+    };
+    legend.addTo(mm);
+  } else if (exact) {
+    L.circleMarker([l.lat, l.lon], { radius: 9, color: "#fff", weight: 2, fillColor: scoreHex(l.score), fillOpacity: 1 }).addTo(mm);
+  } else {
+    L.circle([l.lat, l.lon], { radius: l.geo_precision === "city" ? 800 : 250, color: scoreHex(l.score) }).addTo(mm);
+  }
+  return mm;
+}
+const gmaps = (l) => ({
+  sat: `https://www.google.com/maps/@?api=1&map_action=map&center=${l.lat},${l.lon}&zoom=20&basemap=satellite`,
+  pano: `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${l.lat},${l.lon}`,
+});
+async function loadStreet(l) {   // demandée à l'ouverture de la fiche seulement, puis servie par le cache serveur
+  const box = $("#street-box");
+  if (!box) return;
+  let m;
+  try { m = await fetch(`/api/listings/${l.id}/street`).then((r) => (r.ok ? r.json() : { available: false, reason: "service indisponible" })); }
+  catch (e) { m = { available: false, reason: "service indisponible" }; }
+  if (state.openId !== l.id || !$("#street-box")) return;
+  $("#street-box").innerHTML = m.available
+    ? `<a href="${esc(m.viewer_url)}" target="_blank" rel="noopener"><img src="${esc(m.image_url)}" alt="Vue de rue" loading="lazy"></a>
+       <div class="muted small">Vue de rue du ${esc(m.date ? new Date(m.date).toLocaleDateString("fr-FR") : "?")} · à ${esc(m.distance_m)} m${m.kind === "plane" ? " · photo plane" : ""} ·
+         © ${esc(m.author || "Panoramax")}${m.license ? ` (${esc(m.license)})` : ""} · <a href="${esc(m.viewer_url)}" target="_blank" rel="noopener">Panoramax ↗</a></div>`
+    : `<div class="muted small">Aucune vue de rue${m.reason ? ` (${esc(m.reason)})` : ""}.</div>`;
+}
+
+/* ---------- commentaires (fil du bien, auteur mémorisé dans le navigateur) ---------- */
+function myAuthor() {
+  const a = localStorage["maison.author"];
+  return authors().includes(a) ? a : null;    // un auteur retiré de la configuration est ignoré
+}
+function commentItem(c) {
+  const editing = state.cEdit === c.id;
+  return `<div class="c-item" data-cid="${c.id}">
+    <div class="c-meta"><b>${esc(c.author || "—")}</b><span class="muted">${when(c.created_at)}${c.updated_at ? ` · modifié le ${when(c.updated_at)}` : ""}</span>
+      ${editing ? "" : `<span class="c-tools"><button class="link" data-c-edit="${c.id}" title="Modifier">✏️</button><button class="link" data-c-del="${c.id}" title="Supprimer">🗑</button></span>`}</div>
+    ${editing ? `<textarea class="c-text" data-c-edit-text maxlength="2000" rows="3">${esc(c.body)}</textarea>
+      <div class="c-actions"><button class="btn ghost sm" data-c-cancel>Annuler</button><button class="btn sm" data-c-save="${c.id}">Enregistrer</button></div>`
+      : `<div class="c-body">${esc(c.body)}</div>`}</div>`;
+}
+function commentsBox(l) {
+  const cs = l.comments || [], me = myAuthor();
+  return `<div class="box comments" id="comments-box"><h3>💬 Commentaires${cs.length ? ` (${cs.length})` : ""}</h3>
+    <div class="c-list">${cs.map(commentItem).join("") || `<div class="muted small">Aucun commentaire pour l'instant.</div>`}</div>
+    <form class="c-form" data-comment-form="${l.id}">
+      <textarea class="c-text" name="body" maxlength="2000" rows="2" placeholder="Ajouter un commentaire…"></textarea>
+      <div class="c-actions">
+        ${authors().length ? `<div class="seg c-authors ${state.cNeedAuthor ? "need" : ""}"><span class="muted small">${state.cNeedAuthor ? "Qui écrit ?" : "Auteur :"}</span>${authors().map((a) =>
+          `<button type="button" data-author="${esc(a)}" class="${a === me ? "on" : ""}">${esc(a)}</button>`).join("")}</div>` : ""}
+        <span class="muted small c-hint">Ctrl+Entrée</span><button class="btn sm" type="submit">Publier</button></div>
+    </form></div>`;
+}
+function refreshComments(focus) {   // remplace le seul bloc : carrousel, défilement et mini-carte restent en place
+  const l = state.detail, box = $("#comments-box");
+  if (!l || !box) return;
+  const draft = ($(".c-form textarea", box) || {}).value || "";
+  box.outerHTML = commentsBox(l);
+  const ta = $("#comments-box .c-form textarea");
+  ta.value = draft;
+  if (focus) (state.cEdit ? $("#comments-box [data-c-edit-text]") : ta).focus();
+  const entry = state.all.find((x) => x.id === l.id);   // badge, filtre et recherche de la liste
+  if (entry) {
+    entry.comments_n = l.comments.length;
+    entry.comments_text = l.comments.map((c) => c.body).join(" ") || null;
+    const el = $(`.card[data-id="${l.id}"]`);
+    if (el) el.outerHTML = card(entry);
+  }
+}
+async function commentApi(url, method, body) {
+  const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) { alert("Commentaire : " + (await r.text())); return null; }
+  return r.status === 204 ? {} : r.json();
+}
+async function publishComment(form) {
+  const ta = $("textarea", form), text = ta.value.trim();
+  if (!text) return ta.focus();
+  if (authors().length && !myAuthor()) { state.cNeedAuthor = true; return refreshComments(); }   // choix demandé d'abord
+  const btn = $("button[type=submit]", form); btn.disabled = true;
+  const c = await commentApi(`/api/listings/${form.dataset.commentForm}/comments`, "POST", { author: myAuthor(), body: text });
+  btn.disabled = false;
+  if (!c) return;
+  state.detail.comments.push(c);
+  ta.value = "";
+  refreshComments(true);
+}
 async function openDetail(id) {
   if (state.openId === id && !$("#drawer").hidden) return;
   state.openId = id;
@@ -238,6 +399,7 @@ async function openDetail(id) {
   if (l.merged_into) { state.openId = null; location.replace(`#/l/${l.merged_into}`); return; }   // source fusionnée
   const e = l.enrichment || {}, c = l.commute || {};
   state.photos = photos(l); state.photoIdx = 0;
+  state.detail = l; l.comments = l.comments || []; state.cEdit = null; state.cNeedAuthor = false;
   const bars = Object.entries(l.score_details || {}).map(([k, v]) =>
     `<div class="bar"><span>${esc(k)}</span><div class="track"><div class="fill ${v < 0 ? "neg" : ""}" style="width:${Math.min(100, (Math.abs(v) / (SCORE_MAX[k] || 10)) * 100)}%"></div></div><b>${v > 0 ? "+" : ""}${v}</b></div>`).join("");
   const hist = l.cluster
@@ -267,11 +429,11 @@ async function openDetail(id) {
           ${l.excluded_reason ? `<div style="margin-top:8px"><span class="b no">Exclue : ${esc(l.excluded_reason)}</span></div>` : ""}
           <div class="addr-actions"><button class="btn ghost sm" data-merge-with="${l.id}" title="Doublon non détecté : réunir cette annonce et une autre">🔗 Fusionner avec…</button></div>
         </div>
-        ${dupBoxes(l)}${sourcesBox(l)}
+        ${commentsBox(l)}${dupBoxes(l)}${sourcesBox(l)}
         ${e.summary_fr ? `<div class="box"><h3>✦ Analyse de l'agent</h3><div>${esc(e.summary_fr)}</div>
           ${e.red_flags && e.red_flags.length ? `<ul class="flags">${e.red_flags.map((x) => `<li>⚠️ ${esc(x)}</li>`).join("")}</ul>` : ""}</div>` : ""}
         <div class="box"><h3>Caractéristiques</h3><dl class="kv">
-          <dt>Type</dt><dd>${esc(TYPES[eff(l, "property_type")] || "?")}${e.style ? ` · style ${esc(STYLES[e.style] || e.style)}` : ""}</dd>
+          <dt>Type</dt><dd>${typeBlock(l)}${e.style ? `<div class="muted small-inline">style ${esc(STYLES[e.style] || e.style)}</div>` : ""}</dd>
           <dt>Surface</dt><dd>${fmt(eff(l, "surface_m2"))} m² · ${l.rooms ?? "?"} pièces · ${eff(l, "bedrooms") ?? "?"} chambres${e.largest_bedroom_m2 ? ` (plus grande ${e.largest_bedroom_m2} m²)` : ""}</dd>
           <dt>Terrain</dt><dd>${fmt(eff(l, "land_m2"))} m²${e.garden_m2_estimate ? ` · jardin ≈ ${fmt(e.garden_m2_estimate)} m²` : ""}${e.garden_shape ? ` · ${esc(SHAPES[e.garden_shape] || e.garden_shape)}` : ""}</dd>
           <dt>Énergie</dt><dd>DPE ${dpePill(eff(l, "dpe"))} &nbsp; GES ${dpePill(l.ges)}</dd>
@@ -286,7 +448,11 @@ async function openDetail(id) {
       <div class="col">
         <div class="box"><h3>Localisation</h3>
           <div>${esc(l.address || "Adresse inconnue")}${e.address_confidence && e.address_confidence !== "none" ? ` <span class="b ${e.address_confidence === "exact" ? "yes" : "mid"}">${e.address_method === "user" ? "✔ validée" : esc(e.address_confidence)}</span>` : ""}</div>
-          ${l.lat != null ? `<div class="minimap" id="minimap"></div>` : ""}
+          ${l.lat != null ? `<div class="minimap" id="minimap"></div>
+            ${adjNote(l) ? `<div class="muted small">${esc(adjNote(l))}</div>` : ""}
+            <div class="street" id="street-box"><div class="muted small">Recherche d'une vue de rue…</div></div>
+            <div class="addr-actions"><a class="btn ghost sm" href="${esc(gmaps(l).sat)}" target="_blank" rel="noopener">🛰 Google satellite ↗</a>
+              <a class="btn ghost sm" href="${esc(gmaps(l).pano)}" target="_blank" rel="noopener">🚶 Street View ↗</a></div>` : ""}
           <div class="addr-actions">
             ${e.address_request
               ? `<span class="b mid">🔍 Investigation demandée — traitée au prochain passage de l'agent (:20)</span>`
@@ -302,12 +468,7 @@ async function openDetail(id) {
     </div>`;
   $("#drawer").hidden = false;
   $("#detail").scrollTop = 0;
-  if (l.lat != null) {
-    const mm = L.map("minimap", { zoomControl: false, attributionControl: false }).setView([l.lat, l.lon], l.geo_precision === "city" ? 13 : 15);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(mm);
-    if (l.geo_precision === "exact") L.circleMarker([l.lat, l.lon], { radius: 9, color: "#fff", weight: 2, fillColor: scoreHex(l.score), fillOpacity: 1 }).addTo(mm);
-    else L.circle([l.lat, l.lon], { radius: l.geo_precision === "city" ? 800 : 250, color: scoreHex(l.score) }).addTo(mm);
-  }
+  if (l.lat != null) { miniMap(l); loadStreet(l); }
 }
 function showPhoto(i) {
   const n = state.photos.length; if (!n || !$("#c-img")) return;
@@ -352,6 +513,44 @@ function render() {
 
 /* ---------- événements ---------- */
 document.addEventListener("click", async (ev) => {
+  const au = ev.target.closest("button[data-author]");
+  if (au) {
+    localStorage["maison.author"] = au.dataset.author;
+    const retry = state.cNeedAuthor;
+    state.cNeedAuthor = false;
+    refreshComments();
+    if (retry) publishComment($("#comments-box .c-form"));      // la publication demandée reprend après le choix
+    return;
+  }
+  if (ev.target.closest("[data-type-why]")) { const w = $("#detail .type-why"); if (w) w.hidden = !w.hidden; return; }
+  const tc = ev.target.closest("[data-type-check]");
+  if (tc) {
+    const note = prompt("Faire vérifier le type par l'agent. Un indice ? (facultatif — ex. « le garage touche le voisin »)", "");
+    if (note === null) return;
+    const r = await fetch(`/api/listings/${tc.dataset.typeCheck}/type_request`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ note }) });
+    if (!r.ok) return alert("Demande impossible : " + (await r.text()));
+    return reopen(+tc.dataset.typeCheck);
+  }
+  const ce = ev.target.closest("[data-c-edit]");
+  if (ce) { state.cEdit = +ce.dataset.cEdit; return refreshComments(true); }
+  if (ev.target.closest("[data-c-cancel]")) { state.cEdit = null; return refreshComments(); }
+  const cs = ev.target.closest("[data-c-save]");
+  if (cs) {
+    const text = $("#comments-box [data-c-edit-text]").value.trim();
+    if (!text) return;
+    const upd = await commentApi(`/api/comments/${cs.dataset.cSave}`, "PATCH", { body: text });
+    if (!upd) return;
+    state.detail.comments = state.detail.comments.map((x) => (x.id === upd.id ? upd : x));
+    state.cEdit = null;
+    return refreshComments();
+  }
+  const cd = ev.target.closest("[data-c-del]");
+  if (cd) {
+    if (!confirm("Supprimer ce commentaire ? C'est définitif.")) return;
+    if (!(await commentApi(`/api/comments/${cd.dataset.cDel}`, "DELETE"))) return;
+    state.detail.comments = state.detail.comments.filter((x) => x.id !== +cd.dataset.cDel);
+    return refreshComments();
+  }
   const rb = ev.target.closest("button[data-reaction]");
   if (rb) {
     ev.stopPropagation();
@@ -437,8 +636,33 @@ document.addEventListener("click", async (ev) => {
 function rerender() { state.rendered = false; render(); }
 document.addEventListener("mouseover", (ev) => { const c = ev.target.closest(".card"); if (c) highlight(+c.dataset.id, true); });
 document.addEventListener("mouseout", (ev) => { const c = ev.target.closest(".card"); if (c) highlight(+c.dataset.id, false); });
+document.addEventListener("change", async (ev) => {
+  const sel = ev.target.closest("select[data-type-fix]");
+  if (!sel) return;
+  const id = +sel.dataset.typeFix;
+  sel.disabled = true;
+  const r = await fetch(`/api/listings/${id}/property_type`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: sel.value || null }) });
+  if (!r.ok) { sel.disabled = false; return alert("Correction impossible : " + (await r.text())); }
+  const upd = await r.json();
+  const entry = state.all.find((x) => x.id === upd.id);
+  if (entry) Object.assign(entry, { score: upd.score, score_details: upd.score_details, type_info: upd.type_info });
+  reopen(upd.id);
+});
+document.addEventListener("submit", (ev) => {
+  const f = ev.target.closest("[data-comment-form]");
+  if (f) { ev.preventDefault(); publishComment(f); }
+});
 document.addEventListener("keydown", (ev) => {
   if ($("#drawer").hidden) return;
+  if (ev.target.matches("textarea, input")) {      // saisie : pas de navigation photo ni de fermeture de la fiche
+    if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+      ev.preventDefault();
+      const save = ev.target.matches("[data-c-edit-text]") && $("#comments-box [data-c-save]");
+      if (save) save.click(); else { const f = ev.target.closest("[data-comment-form]"); if (f) publishComment(f); }
+    }
+    if (ev.key === "Escape") ev.target.blur();
+    return;
+  }
   if (ev.key === "Escape") closeDetail();
   if (ev.key === "ArrowRight") showPhoto(state.photoIdx + 1);
   if (ev.key === "ArrowLeft") showPhoto(state.photoIdx - 1);

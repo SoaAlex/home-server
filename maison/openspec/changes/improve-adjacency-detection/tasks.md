@@ -94,7 +94,7 @@
   - `null` rend le type automatique ;
   - une valeur hors liste donne 400.
 - [x] 4.5 Ajouter le champ « Type : <libellé> (<source>) » à l'embed Discord. Vérifier par un test du contenu de l'embed pour un bien `link_detached` venant de la carte.
-- [ ] 4.6 Mettre à jour le `README.md` :
+- [x] 4.6 Mettre à jour le `README.md` :
   - section « Score » : barème du type ;
   - nouvelle section « Mitoyenneté » : sources, ordre de priorité, calcul cartographique, rattrapage, file de vérification, retour arrière.
 
@@ -134,18 +134,18 @@
 
 ## 6. Interface
 
-- [ ] 6.1 Mini-carte de la fiche :
+- [x] 6.1 Mini-carte de la fiche :
   - contrôle de couches « Plan » / « Photo aérienne » (WMTS IGN) et surcouche « Cadastre » ;
   - choix mémorisé dans `localStorage` et mentions de source ;
   - couche GeoJSON de l'adjacence avec sa légende ;
   - explication en l'absence de calcul, et mention « maison non localisée » pour une position imprécise.
 
   Vérifier dans le navigateur par des captures sur trois cas : mitoyenne à adresse exacte, accolée par le garage, carte e-mail `city`.
-- [ ] 6.2 Bloc « Localisation » : vue de rue (image, date, auteur, lien Panoramax) et liens Google Maps satellite / Street View dans un nouvel onglet. Vérifier dans le navigateur :
+- [x] 6.2 Bloc « Localisation » : vue de rue (image, date, auteur, lien Panoramax) et liens Google Maps satellite / Street View dans un nouvel onglet. Vérifier dans le navigateur :
   - les liens ouvrent les bonnes positions ;
   - le journal réseau (CDP) ne montre aucune requête vers un domaine Google à l'affichage de la fiche ;
   - la liste ne demande aucune vue de rue.
-- [ ] 6.3 Ligne « Type » de la fiche :
+- [x] 6.3 Ligne « Type » de la fiche :
   - libellé, pastille de source, badge de désaccord, « Pourquoi ? » ;
   - menu de correction, bouton « Faire vérifier » et badge « vérification demandée ».
 
@@ -156,13 +156,13 @@
 
 ## 7. Rattrapage
 
-- [ ] 7.1 Créer `scripts/adjacency_backfill.py`, à blanc par défaut (D12) : 4 requêtes en parallèle au plus, verdicts « annonce » recalculés sans écriture, rapport HTML autonome dans `/data/reports/`. Vérifier par un test sur `maison_test` avec une récupération simulée :
+- [x] 7.1 Créer `scripts/adjacency_backfill.py`, à blanc par défaut (D12) : 4 requêtes en parallèle au plus, verdicts « annonce » recalculés sans écriture, rapport HTML autonome dans `/data/reports/`. Vérifier par un test sur `maison_test` avec une récupération simulée :
   - aucune ligne `listing` n'est modifiée ;
   - le rapport contient les effectifs, la confusion, les variations de score, les franchissements du seuil 75 et les désaccords illustrés.
-- [ ] 7.2 Ajouter `--apply` (adjacence, `property_type` et `property_type_src` des sources non balayées, `rescore` avec `DISABLE_ALERTS=1`, résumé des biens alertables) et `--request-checks` (garage confirmé seulement, sauf type corrigé par l'utilisateur ou demande déjà en attente). Vérifier par des tests :
+- [x] 7.2 Ajouter `--apply` (adjacence, `property_type` et `property_type_src` des sources non balayées, `rescore` avec `DISABLE_ALERTS=1`, résumé des biens alertables) et `--request-checks` (garage confirmé seulement, sauf type corrigé par l'utilisateur ou demande déjà en attente). Vérifier par des tests :
   - une seconde application ne recalcule que les échecs ;
   - `--request-checks` est idempotent et ignore les annonces sans garage confirmé.
-- [ ] 7.3 Après un `pg_dump -t listing`, lancer l'analyse à blanc sur la base réelle. Vérifier :
+- [x] 7.3 Après un `pg_dump -t listing`, lancer l'analyse à blanc sur la base réelle. Vérifier :
   - durée inférieure à 30 min ;
   - rapport transmis à Alexandre.
 
@@ -170,14 +170,14 @@
 
 ## 8. Skill, job Hermes et contrôle santé
 
-- [ ] 8.1 Copier la skill `maison-enrichment` actuelle dans une sauvegarde datée, hors de son dossier, puis la mettre à jour (D15) :
+- [x] 8.1 Copier la skill `maison-enrichment` actuelle dans une sauvegarde datée, hors de son dossier, puis la mettre à jour (D15) :
   - section « Mitoyenneté » et section « Vérification du type » ;
   - schéma : `link_detached`, `type_evidence`, `_type_check` ;
   - pièges et interdiction des images Google ;
   - règles à recopier telles quelles dans le contexte des sous-agents.
 
   Vérifier par `skill_view`, puis par un passage manuel sur 2 annonces (planche, verdict, `maison post`) : réponse 200 et `type_info` mis à jour dans `maison show`.
-- [ ] 8.2 Étendre `ops/healthcheck.py` :
+- [x] 8.2 Étendre `ops/healthcheck.py` :
   - sonde `maison mitoyennete-adresse` sur une adresse témoin publique (mairie) ;
   - taux d'échec des calculs depuis le contrôle précédent (au-delà de 20 % → ⚠️) ;
   - taille et ancienneté de la file des vérifications ;
@@ -189,7 +189,7 @@
 
 ## 9. Mise en service et vérification d'ensemble
 
-- [ ] 9.1 Déployer selon le Migration Plan : `docker compose build`, `up -d`, skill et copies du CLI à jour dans la même fenêtre. Vérifier :
+- [x] 9.1 Déployer selon le Migration Plan : `docker compose build`, `up -d`, skill et copies du CLI à jour dans la même fenêtre. Vérifier :
   - la ligne « mitoyenneté » apparaît dans `docker compose logs collector` au cycle suivant ;
   - `maison mitoyennete <id>` fonctionne sur une annonce à adresse exacte connue ;
   - une fiche montre la photo aérienne, le cadastre, les bâtiments et la vue de rue.
@@ -199,7 +199,7 @@
   - environ 410 demandes sont créées ;
   - le lendemain, la file a reculé d'au moins 8 demandes par passage ;
   - le message de santé affiche la taille de la file.
-- [ ] 9.3 Faire un commit local (auteur SoaAlex) du code, des tests, du README et des artefacts OpenSpec, sans push sans accord explicite. Vérifier `git log -1 --stat`, puis :
+- [x] 9.3 Faire un commit local (auteur SoaAlex) du code, des tests, du README et des artefacts OpenSpec, sans push sans accord explicite. Vérifier `git log -1 --stat`, puis :
   - `git status` : aucun fichier de `data/`, de `tests/fixtures/` ni de `.scratch/`, aucun rapport ;
   - `git diff --cached` relu : aucune adresse ni coordonnée réelle dans les fichiers versionnés.
 
