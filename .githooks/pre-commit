@@ -16,7 +16,8 @@
 # False positive: put `gitleaks:allow` in a comment on the line (checks 1 and 2 both
 # honor it; `secret-guard:allow` works for check 1 only), or add the finding's
 # fingerprint to .gitleaksignore. `git commit --no-verify` skips this hook; the
-# repository is public, so do not use it without the owner's approval.
+# repository is public, so do not use it without the owner's approval. pre-push runs
+# the same checks again on everything a push would send.
 set -eu
 
 hooks_dir=$(cd "$(dirname "$0")" && pwd)

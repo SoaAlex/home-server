@@ -1,5 +1,5 @@
-# Gitleaks configuration, used by .githooks/pre-commit, .githooks/commit-msg and by
-# full scans:
+# Gitleaks configuration, used by .githooks/pre-commit, .githooks/commit-msg, .githooks/pre-push and
+# by full scans:
 #
 #   gitleaks git --redact -v .        # whole history
 #   gitleaks dir --redact -v <dir>    # a directory tree

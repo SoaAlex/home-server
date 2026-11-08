@@ -209,8 +209,10 @@ cp teslamate/.env.example teslamate/.env
 
 ## Git hooks
 
-Two Git hooks guard each commit: one refuses secrets, the other enforces
-[Conventional Commits](https://www.conventionalcommits.org/). They live in
+Three Git hooks guard the repository. Two of them guard each commit: one
+refuses secrets, the other enforces
+[Conventional Commits](https://www.conventionalcommits.org/). The third checks
+the commits again before they leave your machine. The hooks live in
 `.githooks/`, and each clone must turn them on once.
 
 To turn on the hooks, run this command in the clone:
@@ -289,6 +291,17 @@ feat(maison): add a surface filter
 fix(pihole): raise the rate limit
 chore!: drop the Minecraft stack
 ```
+
+### Push check
+
+The `pre-push` hook runs the secret checks again on the commits that a push
+would send. Merges, rebases, cherry-picks, `git am`, and
+`git commit --no-verify` skip the commit hooks, so this hook is the last gate
+before commits become public. It checks the file names, the `.env` values, the
+commit messages, the patches with gitleaks, and the Ansible Vault files. When
+it finds a problem, rewrite the commits before you push, and rotate any secret
+that left your machine. Skip the hook with `git push --no-verify` only with the
+owner's approval, because this repository is public.
 
 ## Start the stacks
 
