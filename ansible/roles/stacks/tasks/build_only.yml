@@ -1,0 +1,15 @@
+- name: "Look for image {{ build.image }}"
+  ansible.builtin.command: docker image inspect --format '{{ '{{' }}.Id{{ '}}' }}' {{ build.image }}
+  register: stacks_build_image
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "Build {{ build.image }} (absent)"
+  ansible.builtin.command: >-
+    {{ 'docker compose build' if build.how == 'compose'
+       else 'docker build --quiet --tag ' ~ build.image ~ ' .' }}
+  args:
+    chdir: "{{ nas_repo_dir }}/{{ build.dir }}"
+  when: stacks_build_image.rc != 0
+  changed_when: true

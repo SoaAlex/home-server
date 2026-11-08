@@ -1,0 +1,17 @@
+# The compose files are the source of truth: Ansible decides per service
+# whether it differs (files/compose_drift.py, design D2) and only then runs
+# `docker compose up -d --no-deps --pull never <services>`. Containers outside
+# these projects (UGOS apps such as qBittorrent, Hermes helpers) are never
+# looked at.
+- name: Converge each stack
+  ansible.builtin.include_tasks: stack.yml
+  loop: "{{ stacks_list }}"
+  loop_control:
+    loop_var: stack
+
+- name: Build local images that have no long-running service
+  ansible.builtin.include_tasks: build_only.yml
+  loop: "{{ stacks_build_only }}"
+  loop_control:
+    loop_var: build
+    label: "{{ build.image }}"

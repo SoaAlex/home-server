@@ -1,0 +1,91 @@
+- name: "{{ stack }}: check its .env files"
+  ansible.builtin.stat:
+    path: "{{ nas_repo_dir }}/{{ stack }}/{{ item }}"
+  loop: "{{ stacks_env_files[stack] | default([]) }}"
+  register: stacks_env
+
+- name: "{{ stack }}: refuse to start without its .env"
+  ansible.builtin.fail:
+    msg: >-
+      {{ stack }}: missing {{ stacks_env.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}.
+      Write them first: ansible-playbook playbooks/site.yml --tags secrets
+  when: stacks_env.results | rejectattr('stat.exists') | list | length > 0
+
+- name: "{{ stack }}: look into critical data directories"
+  ansible.builtin.find:
+    paths: "{{ nas_repo_dir }}/{{ stack }}/{{ item }}"
+    file_type: any
+    hidden: true
+  loop: "{{ stacks_critical_data[stack] | default([]) }}"
+  register: stacks_data
+  become: true  # some are owned by container users (root, 911...)
+
+- name: "{{ stack }}: refuse to start on empty data"
+  ansible.builtin.fail:
+    msg: >-
+      {{ stack }}: {{ stacks_data.results | selectattr('matched', 'equalto', 0) | map(attribute='item') | join(', ') }}
+      empty or missing: the service would start with no data. Restore it first
+      (playbooks/restore.yml), or pass -e allow_empty_data=true for a deliberate fresh start.
+  when:
+    - stacks_data.results | selectattr('matched', 'equalto', 0) | list | length > 0
+    - not allow_empty_data | bool
+
+- name: "{{ stack }}: pull images (stacks_pull=true)"
+  ansible.builtin.command: docker compose pull --quiet
+  args:
+    chdir: "{{ nas_repo_dir }}/{{ stack }}"
+  changed_when: false  # a pull alone changes nothing that runs; recreation is decided below
+  when: stacks_pull | bool
+
+- name: "{{ stack }}: compare running services with the compose file"
+  ansible.builtin.command: /usr/bin/python3 -I {{ nas_repo_dir }}/ansible/files/compose_drift.py {{ nas_repo_dir }}/{{ stack }}
+  register: stacks_drift_raw
+  changed_when: false
+  check_mode: false
+
+- name: "{{ stack }}: parse"
+  ansible.builtin.set_fact:
+    stacks_drift: "{{ stacks_drift_raw.stdout | from_json }}"
+
+- name: "{{ stack }}: check external networks exist"
+  ansible.builtin.command: docker network inspect --format '{{ '{{' }}.Name{{ '}}' }}' {{ item }}
+  loop: "{{ stacks_drift.external_networks }}"
+  register: stacks_networks
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: "{{ stack }}: refuse to start without its external networks"
+  ansible.builtin.fail:
+    msg: >-
+      {{ stack }} needs network(s)
+      {{ stacks_networks.results | rejectattr('rc', 'equalto', 0) | map(attribute='item') | join(', ') }}:
+      start the stack that creates them first (order: {{ stacks_list | join(' -> ') }}).
+  when:
+    - stacks_networks.results | rejectattr('rc', 'equalto', 0) | list | length > 0
+    - not ansible_check_mode
+
+- name: "{{ stack }}: build missing local images"
+  ansible.builtin.command: docker compose build {{ item.service }}
+  args:
+    chdir: "{{ nas_repo_dir }}/{{ stack }}"
+  loop: "{{ stacks_drift.services | selectattr('build') | rejectattr('image_present') | list }}"
+  loop_control:
+    label: "{{ item.service }}"
+  changed_when: true
+
+- name: "{{ stack }}: services that differ"
+  ansible.builtin.debug:
+    msg: >-
+      {% for s in stacks_drift.services if s.reasons or s.notes %}{{ s.service }}:
+      {{ (s.reasons + s.notes) | join(', ') }}{{ '' if s.reasons else ' (left as is)' }}.
+      {% else %}every service matches its compose file{% endfor %}
+  changed_when: stacks_drift.drifted | length > 0
+
+- name: "{{ stack }}: start or recreate only those services"
+  ansible.builtin.command: >-
+    docker compose up --detach --no-deps --pull never --quiet-pull {{ stacks_drift.drifted | join(' ') }}
+  args:
+    chdir: "{{ nas_repo_dir }}/{{ stack }}"
+  when: stacks_drift.drifted | length > 0
+  changed_when: true

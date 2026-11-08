@@ -36,11 +36,11 @@ Règles pour toute la mise en œuvre : rien n'est appliqué en réel sur le NAS 
 
 ## 4. Stacks Docker
 
-- [ ] 4.1 Rôle `stacks` : liste ordonnée `common` → `home-server` → `teslamate` → `maison`, vérification de `common-network` avant les stacks qui le déclarent `external`, `docker_compose_v2` avec `pull: never` par défaut et `stacks_pull=true` pour mettre à jour ; vérifier en `--check --diff` zéro conteneur recréé
-- [ ] 4.2 Préconditions : `.env` présent et dossiers critiques non vides (`vw-data`, `wireguard/config`, `nginx-proxy-manager/data`), contournement `allow_empty_data` ; vérifier le refus avec une variable pointant vers un dossier vide de test
-- [ ] 4.3 Images locales : construire `maison`, `eurl-frais` et `nas-backup` seulement si absentes, aucun `up` pour `eurl-frais` ; vérifier `changed=0` avec les images présentes et `docker ps` sans conteneur `eurl-frais`
-- [ ] 4.4 Exclusions : `qbittorrent-app-1`, conteneurs `hermes-*` jamais touchés ; vérifier que les rapports `--check` ne les mentionnent pas
-- [ ] 4.5 Documenter dans `ansible/README.md` l'ajout d'un service (compose seul, rien dans Ansible) et vérifier avec un service factice ajouté dans un compose de test que le rôle le démarre sans modification d'Ansible
+- [x] 4.1 Rôle `stacks` : liste ordonnée `common` → `home-server` → `teslamate` → `maison`, vérification de `common-network` avant les stacks qui le déclarent `external`, `docker_compose_v2` avec `pull: never` par défaut et `stacks_pull=true` pour mettre à jour ; vérifier en `--check --diff` zéro conteneur recréé
+- [x] 4.2 Préconditions : `.env` présent et dossiers critiques non vides (`vw-data`, `wireguard/config`, `nginx-proxy-manager/data`), contournement `allow_empty_data` ; vérifier le refus avec une variable pointant vers un dossier vide de test
+- [x] 4.3 Images locales : construire `maison`, `eurl-frais` et `nas-backup` seulement si absentes, aucun `up` pour `eurl-frais` ; vérifier `changed=0` avec les images présentes et `docker ps` sans conteneur `eurl-frais`
+- [x] 4.4 Exclusions : `qbittorrent-app-1`, conteneurs `hermes-*` jamais touchés ; vérifier que les rapports `--check` ne les mentionnent pas
+- [x] 4.5 Documenter dans `ansible/README.md` l'ajout d'un service (compose seul, rien dans Ansible) et vérifier avec un service factice ajouté dans un compose de test que le rôle le démarre sans modification d'Ansible
 
 ## 5. Agent Hermes
 

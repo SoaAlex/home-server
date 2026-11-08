@@ -104,6 +104,7 @@ difference without changing anything; files copied from the repo show a
 | `backup_units` | `backup_units` | `nas-backup*` user units and their timers. | Copies the repo files unchanged. |
 | `legacy_cron` | `legacy_cron` | Removes the root cron lines listed in `legacy_cron_lines`. | Does nothing without `-e cleanup_legacy_cron=true`. |
 | `secrets` | `secrets` | Writes each `.env` from the vault, `1000:10`, mode 600. | Fails before writing when a key of `.env.example` is missing; `no_log` everywhere. |
+| `stacks` | `stacks` | Starts `common`, `home-server`, `teslamate`, and `maison` in that order; builds `maison`, `eurl-frais`, and `nas-backup` images when absent. | Recreates only services that differ; never pulls unless `-e stacks_pull=true`; refuses empty critical data unless `-e allow_empty_data=true`. |
 
 `--tags host` runs every host role (everything except `secrets`).
 
@@ -113,6 +114,42 @@ For example, to see what cleaning the root crontab would change:
 ./run ansible-playbook playbooks/site.yml --check --diff --tags legacy_cron \
   -e cleanup_legacy_cron=true
 ```
+
+## Docker stacks
+
+The `stacks` role runs `files/compose_drift.py` on each stack. It lists the
+services that differ from their compose file: no container, a stopped
+container that has a restart policy, a newer local image, or a changed
+configuration. Only those services go through
+`docker compose up --detach --no-deps --pull never`. `--check` prints each
+service and its reason, without starting anything.
+
+The configuration check depends on who created the container:
+
+- Compose created it: Compose's own `up --dry-run` decides. It's the only
+  exact check, because the hash that `up` writes for a service with an
+  `env_file` can't be reproduced with `docker compose config --hash`.
+- The UGOS Docker app recreated it during its nightly image update: the app
+  labels the container with a manifest digest, so `--dry-run` always reports
+  `Recreate`. The script compares the `com.docker.compose.config-hash` label
+  instead, which works only without `env_file` and with the same Compose
+  version. Otherwise it notes the service as not comparable and leaves it
+  alone.
+
+### Add a service
+
+To add a service, edit the stack's `docker-compose.yaml` only. You don't
+change anything in Ansible:
+
+1. Add the service to the compose file (and its variables to `.env` and
+   `.env.example`).
+2. Run `scripts/vault-import-env.py` if you changed a `.env`.
+3. Run `./run ansible-playbook playbooks/site.yml --check --diff --tags stacks`
+   to see the new service listed as `no container`.
+4. Run the same command without `--check`. Only the new service starts.
+
+A new stack (a new directory) needs one line in `stacks_list` in
+`roles/stacks/defaults/main.yml`, plus its `.env` files in `stacks_env_files`.
 
 ## Tests
 

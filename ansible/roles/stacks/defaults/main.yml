@@ -1,0 +1,19 @@
+# Compose stacks, in start order (common creates common-network).
+stacks_list: [common, home-server, teslamate, maison]
+# .env files each stack needs (relative to the stack directory).
+stacks_env_files:
+  common: [.env]
+  home-server: [.env, aiostreams/.env, aiometadata/.env]
+  teslamate: [.env]
+  maison: [.env]
+# Data directories that would make a service start empty without any error.
+stacks_critical_data:
+  home-server: [vw-data, wireguard/config, nginx-proxy-manager/data]
+# Start a stack even when a critical data directory is empty (fresh install).
+allow_empty_data: false
+# Pull new images, then recreate only the services whose image changed.
+stacks_pull: false
+# Images built locally and used without a long-running service (no `up`).
+stacks_build_only:
+  - {dir: eurl-frais, image: "eurl-frais:latest", how: compose}
+  - {dir: backup, image: "nas-backup:latest", how: dockerfile}
