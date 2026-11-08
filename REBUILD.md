@@ -201,12 +201,6 @@ Each stack needs its `.env` present first:
 `teslamate/.env` Postgres credentials must match `common/.env` — TeslaMate connects to
 the shared `common-postgres`, not a database of its own.
 
-### Not managed by this repo
-
-**qBittorrent** runs as a UGOS Docker app (`ugreen/qbittorrent:v1`, container
-`qbittorrent-app-1`), not via compose. Recreate it through the UGOS UI and point it at
-the existing `/volume1/docker/qbittorrent` config directory.
-
 ---
 
 ## 7. Router configuration

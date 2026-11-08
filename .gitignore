@@ -41,13 +41,8 @@ teslamate/import/
 teslamate/teslamate_backup.sql
 teslamate/Teslamate-CustomGrafanaDashboards/
 
-# qBittorrent state & torrents
-qbittorrent/qBittorrent/BT_backup/
-qbittorrent/qBittorrent/GeoDB/
-qbittorrent/qBittorrent/logs/
-qbittorrent/qBittorrent/rss/
-qbittorrent/qBittorrent/qBittorrent-data.conf
-# qbittorrent/qBittorrent/qBittorrent.conf
+# UGOS torrent-client app folder: local runtime config, never in git
+qbittorrent/
 
 # Common postgres volume (managed by docker)
 common/postgres-data/

@@ -119,7 +119,7 @@ f.node("fr", 808, 96, 160, 80, "backend", "OCI", "Frigate", ":8971 · + ptz :809
 f.node("cs", 1064, 96, 160, 80, "backend", "OCI", "code-server", ":8443", expo="PRIVATE")
 f.node("ma", 808, 232, 160, 80, "backend", "OCI", "maison", "web :8090", "+ collector", expo="PRIVATE")
 f.node("ph", 1064, 232, 160, 80, "backend", "DNS", "Pi-hole", "macvlan", expo="PRIVATE")
-f.callout(1240, 420, ["On demand: eurl-frais, nas-backup,", "hermes-dockercli · stopped: qBittorrent"], "M 1100 440 Q 1060 380 1040 340", (1040, 340), anchor="end")
+f.callout(1240, 420, ["On demand: eurl-frais, nas-backup,", "hermes-dockercli"], "M 1047 414 Q 1044 378 1040 340", (1040, 340), anchor="end")
 figs.append(("03-containers", "Docker containers", "17 running containers, grouped by who can reach them.",
              f.svg(LEG_EXPO + [("zone-accent", "published zone"), ("focal", "entry point"), ("store", "data"), ("arrow:muted", "internal flow")])))
 

@@ -80,7 +80,6 @@ docker/
 ├── teslamate/     Tesla tracking with Grafana dashboards
 ├── maison/        Private house-search crawler and UI (LAN and VPN only)
 ├── eurl-frais/    Monthly company-expenses CLI, run by a Hermes job
-├── qbittorrent/   Torrent client (managed by the UGOS app, not compose)
 ├── backup/        Encrypted restic backups to the RAID and Google Drive
 ├── hermes-vault/  Encrypted configuration of the Hermes agent
 └── docs/          Infrastructure diagrams and their generator
@@ -145,11 +144,6 @@ The `web` and `collector` services share one image. See
 A one-shot CLI container with no port. A Hermes job runs it on the 10th of each
 month. It mounts only two folders of the company directory, set by
 `EURL_CLOUD_DIR` in its `.env`. See [`eurl-frais/README.md`](eurl-frais/README.md).
-
-### qBittorrent (`qbittorrent/`)
-
-The torrent client, managed by the UGOS app rather than by compose. It uses
-port 6881 for BitTorrent and serves a web UI.
 
 ## Networking
 
