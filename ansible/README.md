@@ -99,7 +99,7 @@ difference without changing anything; files copied from the repo show a
 | `docker_host` | `docker_host` | `/etc/docker/daemon.json` (`data-root` on the SSD). | Fails when it differs and containers run, unless `-e allow_docker_restart=true`. |
 | `network_shim` | `network_shim` | Pi-hole macvlan shim script and unit; checks the route through `ph-shim`. | A changed shim waits for the next boot; it's never restarted. |
 | `ssh` | `ssh` | Drop-in `AllowTcpForwarding local`. | Validated with `sshd -t` before reload; restored if invalid. |
-| `systemd_boot` | `systemd_boot` | `user@1000` wait-for-mounts drop-in, `nas-boot-check.service`, linger, Tailscale stopped and disabled. | `nas-boot-check` is enabled, not started. |
+| `systemd_boot` | `systemd_boot` | `user@1000` wait-for-mounts drop-in, `nas-boot-check.service`, linger. | `nas-boot-check` is enabled, not started. |
 | `user_tools` | `user_tools` | Wrappers in `~/.local/bin` from the repo; restic, rclone, and age at pinned versions. | Downloads only when the version differs; a wrong SHA-256 fails before the binary is touched. |
 | `backup_units` | `backup_units` | `nas-backup*` user units and their timers. | Copies the repo files unchanged. |
 | `legacy_cron` | `legacy_cron` | Removes the root cron lines listed in `legacy_cron_lines`. | Does nothing without `-e cleanup_legacy_cron=true`. |

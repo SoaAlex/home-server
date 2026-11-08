@@ -27,7 +27,7 @@ Each check compares the live system with the expectation recorded by
 - Containers with a restart policy: running, healthy, not in a crash loop.
 - Listening ports and HTTP answers of the published services.
 - Network interfaces, the macvlan route and DNS answer, outbound Internet.
-- System units, and units that must stay off after an update.
+- System units that were active when the state was recorded.
 - Root-level customizations that an update could wipe.
 - The user manager, the linger flag, the user services and timers.
 - The Hermes gateway and its Discord connection.

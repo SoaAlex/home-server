@@ -74,13 +74,6 @@ Chaque wrapper de `~/.local/bin` utilisé par les jobs ou les skills (`nas-backu
 - **WHEN** un wrapper installé diffère de sa source dans le repo
 - **THEN** le mode vérification affiche le diff et l'exécution normale le remplace par la version du repo
 
-### Requirement: Tailscale reste arrêté
-Le playbook SHALL garantir que `tailscaled.service` est arrêté et désactivé, et ne SHALL jamais le démarrer.
-
-#### Scenario: Tailscale réactivé par une mise à jour UGOS
-- **WHEN** une mise à jour a réactivé ou démarré `tailscaled`
-- **THEN** le playbook l'arrête et le désactive, et le rapporte comme changement
-
 ### Requirement: Crontab root sans tâche obsolète
 Le playbook SHALL pouvoir retirer de la crontab root les copies et dumps hérités remplacés par nas-backup, uniquement quand l'utilisateur l'active par une variable explicite, sans toucher aux autres lignes.
 

@@ -54,10 +54,8 @@ SYSTEM_CANDIDATES = [
     "ugos_serv.service", "macvlan-shim.service", "ssh.service", "cron.service", "smbd.service",
     "nmbd.service", "earlyoom.service", "libvirtd.service",
 ]
-MUST_STAY_OFF = ["tailscaled.service"]  # stopped on purpose (unpatched CVE): an update must not revive it
 CUSTOM_FILES = [  # root-level customisations an update could wipe
     "/etc/systemd/system/macvlan-shim.service", "/usr/local/bin/macvlan-shim.sh",
-    "/etc/systemd/system/tailscaled.service.d/10-unset-godebug.conf",
     "/etc/systemd/system/user@1000.service.d/10-wait-mounts.conf",
     "/etc/systemd/system/nas-boot-check.service",
 ]
@@ -316,8 +314,7 @@ def observe(exp: dict) -> dict:
     obs["routes"] = {m["ip"]: route_dev(m["ip"]) for m in mv}
     obs["dns"] = {m["ip"]: dns_query(m["ip"]) for m in mv if m.get("dns")}
     obs["net"] = internet()
-    names = set(exp.get("system_active", [])) | set(exp.get("system_inactive", []))
-    obs["sys_units"] = {u: unit_state(u) for u in sorted(names)}
+    obs["sys_units"] = {u: unit_state(u) for u in sorted(set(exp.get("system_active", [])))}
     obs["failed_sys"] = failed_units()
     obs["files"] = {p: os.path.exists(p) for p in exp.get("files", [])}
     uu = exp.get("user_units", {})
@@ -446,12 +443,6 @@ def evaluate(exp: dict, obs: dict) -> list:
         add("système", FAIL, "unités arrêtées : " + ", ".join(down))
     elif exp.get("system_active"):
         add("système", OK, f"{len(exp['system_active'])} unités système actives")
-    for u in exp.get("system_inactive", []):
-        st = obs["sys_units"].get(u, {})
-        if st.get("ActiveState") == "active" or st.get("UnitFileState") == "enabled":
-            add("sécurité", FAIL, f"{u} est revenu ({st.get('ActiveState')}/{st.get('UnitFileState')}) alors qu'il doit rester arrêté")
-        else:
-            add("sécurité", OK, f"{u} reste arrêté et désactivé")
     lost = [p for p, ok in obs["files"].items() if not ok]
     if lost:
         add("personnalisations", FAIL, "fichiers root disparus (mise à jour ?) : " + ", ".join(lost))
@@ -616,7 +607,6 @@ def cmd_snapshot(args) -> int:
                 if net in mv and ip:
                     exp["macvlan"].append({"container": n, "ip": ip, "dev": route_dev(ip), "dns": dns_query(ip)})
     exp["system_active"] = [u for u in SYSTEM_CANDIDATES if unit_state(u).get("ActiveState") == "active"]
-    exp["system_inactive"] = [u for u in MUST_STAY_OFF if unit_state(u).get("ActiveState") != "active"]
     exp["files"] = [p for p in CUSTOM_FILES if os.path.exists(p)]
     exp["failed_baseline"] = {"system": sorted(failed_units()), "user": sorted(failed_units(user=True))}
     services, timers = [], []

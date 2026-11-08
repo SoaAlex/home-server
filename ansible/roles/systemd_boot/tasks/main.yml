@@ -59,11 +59,3 @@
   become: true
   changed_when: true
   when: systemd_boot_linger.stdout != 'yes'
-
-# Tailscale stays off (unpatched critical CVE, user decision 2026-10): never started.
-- name: Keep tailscaled stopped and disabled
-  ansible.builtin.systemd_service:
-    name: tailscaled.service
-    enabled: false
-    state: stopped
-  become: true

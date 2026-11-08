@@ -20,7 +20,6 @@ def healthy():
         "interfaces": {"bridge0": ["192.168.1.55"], "ph-shim": ["192.168.1.56"]},
         "macvlan": [{"container": "dns", "ip": "192.168.1.100", "dev": "ph-shim", "dns": True}],
         "system_active": ["docker.service", "macvlan-shim.service"],
-        "system_inactive": ["tailscaled.service"],
         "files": ["/etc/systemd/system/macvlan-shim.service"],
         "failed_baseline": {"system": ["music_serv.service"], "user": []},
         "user_units": {"services": ["hermes-gateway.service"], "timers": ["nas-backup.timer"]},
@@ -41,8 +40,7 @@ def healthy():
         "routes": {"192.168.1.100": "ph-shim"}, "dns": {"192.168.1.100": True},
         "net": {"resolve": True, "connect": True},
         "sys_units": {"docker.service": {"ActiveState": "active"},
-                      "macvlan-shim.service": {"ActiveState": "active", "UnitFileState": "enabled"},
-                      "tailscaled.service": {"ActiveState": "inactive", "UnitFileState": "disabled"}},
+                      "macvlan-shim.service": {"ActiveState": "active", "UnitFileState": "enabled"}},
         "failed_sys": {"music_serv.service"}, "failed_user": set(),
         "files": {"/etc/systemd/system/macvlan-shim.service": True},
         "user_manager": True, "linger": True,
@@ -138,12 +136,6 @@ class Evaluate(unittest.TestCase):
 
     def test_no_internet(self):
         self.assertTrue(self.fails(lambda e, o: o["net"].update(resolve=False)))
-
-    def test_tailscale_must_stay_off(self):
-        f = self.fails(lambda e, o: o["sys_units"]["tailscaled.service"].update(ActiveState="active"))
-        self.assertTrue(any(c.group == "sécurité" for c in f))
-        f = self.fails(lambda e, o: o["sys_units"]["tailscaled.service"].update(UnitFileState="enabled"))
-        self.assertTrue(any(c.group == "sécurité" for c in f))
 
     def test_update_wiped_a_root_customisation(self):
         f = self.fails(lambda e, o: o["files"].update({"/etc/systemd/system/macvlan-shim.service": False}))
