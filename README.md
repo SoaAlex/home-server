@@ -228,7 +228,8 @@ any of these checks fails:
   password file. Templates such as `.env.example` pass.
 - A staged file contains the value of a secret from an `.env` file on the
   machine. This catches secrets that have no recognizable shape, such as a
-  random path prefix.
+  random path prefix. The check reads files of any size and encoding, and it
+  also knows the values in `.env` backups and in commented-out assignments.
 - [gitleaks](https://github.com/gitleaks/gitleaks) finds a secret. The file
   `.gitleaks.toml` extends its built-in rules with Discord webhooks, WireGuard
   keys, URLs that embed a password, and password hashes.
@@ -237,11 +238,11 @@ any of these checks fails:
 The hooks need `python3` and `gitleaks`, and refuse the commit when either is
 missing. The hook never prints a secret, only the file, the line, and the rule.
 All checks run before the commit is refused, so one attempt lists every
-problem. If a finding is a false positive, add a `gitleaks:allow` or
-`secret-guard:allow` comment on the line. For gitleaks, you can also add the
-fingerprint that it prints to `.gitleaksignore` with a comment that explains
-why. Skip the hooks with `git commit --no-verify` only after you have checked
-the change by hand, because this repository is public.
+problem. If a finding is a false positive, add a `gitleaks:allow` comment on
+the line. Both checks honor it. For gitleaks, you can also add the fingerprint
+that it prints to `.gitleaksignore` with a comment that explains why. Skip the
+hooks with `git commit --no-verify` only after you have checked the change by
+hand, because this repository is public.
 
 To scan everything that is already committed, run:
 

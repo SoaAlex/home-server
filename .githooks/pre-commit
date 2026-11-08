@@ -13,10 +13,10 @@
 # Every check runs, then the commit is refused if any failed. A missing python3 or
 # gitleaks refuses the commit too: an unchecked commit is not a clean one.
 #
-# False positive: put `gitleaks:allow` (or `secret-guard:allow`) in a comment on the
-# line, or add the finding's fingerprint to .gitleaksignore. `git commit
-# --no-verify` skips this hook; the repository is public, so do not use it without
-# the owner's approval.
+# False positive: put `gitleaks:allow` in a comment on the line (checks 1 and 2 both
+# honor it; `secret-guard:allow` works for check 1 only), or add the finding's
+# fingerprint to .gitleaksignore. `git commit --no-verify` skips this hook; the
+# repository is public, so do not use it without the owner's approval.
 set -eu
 
 hooks_dir=$(cd "$(dirname "$0")" && pwd)
