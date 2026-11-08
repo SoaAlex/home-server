@@ -23,9 +23,6 @@ home-server/pihole/pihole/logrotate
 # Vaultwarden data
 home-server/vw-data/
 
-# Code-server runtime data
-home-server/code-server/
-
 # Wireguard peer keys & runtime
 home-server/wireguard/
 

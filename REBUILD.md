@@ -191,7 +191,7 @@ Each stack needs its `.env` present first:
 | File | Variables |
 |---|---|
 | `common/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
-| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `CODE_SERVER_PASSWORD`, `PTZ_API_TOKEN`, `PTZ_CAMERA_USER`, `WSTUNNEL_PATH_PREFIX` |
+| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `PTZ_API_TOKEN`, `PTZ_CAMERA_USER`, `WSTUNNEL_PATH_PREFIX` |
 | `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI`, `BUILTIN_STREMTHRU_URL` (must be `http://stremthru:8080`, or debrid playback fails) |
 | `home-server/aiometadata/.env` | `PORT`, `HOST_NAME`, `NODE_ENV`, `LOG_LEVEL`, `DATABASE_URI`, `REDIS_URL`, `ADMIN_KEY` |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |

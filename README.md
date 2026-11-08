@@ -111,7 +111,6 @@ cameras.
 | Nginx Proxy Manager | `jc21/nginx-proxy-manager` | 80, 81, 443 | Reverse proxy and Let's Encrypt certificates |
 | Pi-hole | `pihole/pihole` | 8080 (web) | DNS ad-blocking, macvlan address |
 | Vaultwarden | `vaultwarden/server` | 83, 3012 | Bitwarden-compatible password manager |
-| Code Server | `linuxserver/code-server` | 8443 | VS Code in the browser, LAN and VPN only |
 | WireGuard | `linuxserver/wireguard` | 51820/udp | VPN, **host** network mode |
 | wstunnel | `erebe/wstunnel` | 8480 | WireGuard over WebSocket/TLS, behind NPM |
 | AIOStreams | `viren070/aiostreams` | 1080 | Stremio add-on aggregator |
@@ -187,7 +186,7 @@ Secrets live in git-ignored `.env` files, one per stack.
 | File | Variables |
 |---|---|
 | `common/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
-| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `CODE_SERVER_PASSWORD`, `PTZ_CAMERA_USER`, `PTZ_API_TOKEN`, `WSTUNNEL_PATH_PREFIX` |
+| `home-server/.env` | `PIHOLE_WEBPASSWORD`, `FRIGATE_RTSP_PASSWORD`, `PTZ_CAMERA_USER`, `PTZ_API_TOKEN`, `WSTUNNEL_PATH_PREFIX` |
 | `home-server/aiostreams/.env` | `BASE_URL`, `SECRET_KEY`, `DATABASE_URI`, `BUILTIN_STREMTHRU_URL` |
 | `maison/.env` | `DATABASE_URL`, `DISCORD_WEBHOOK_URL`, `ENRICH_TOKEN`, `IMAP_USER`, `IMAP_PASSWORD`, and more |
 | `teslamate/.env` | `TESLAMATE_ENCRYPTION_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
