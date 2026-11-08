@@ -20,7 +20,7 @@ Chaque groupe fusionné SHALL avoir exactement une annonce principale. Les autre
 ### Requirement: Choix de l'annonce principale
 Lors de la formation d'un groupe, l'annonce principale SHALL être la première selon cet ordre :
 1. adresse validée par l'utilisateur ;
-2. données utilisateur (réaction, à visiter, note) ;
+2. données utilisateur (réaction, à visiter, note, commentaire) ;
 3. enrichissement terminé ;
 4. priorité de source : agence directe, Netty, Maes ou notaires, puis PAP ou Bien'ici, puis cartes e-mail ;
 5. nombre de photos ;
@@ -31,6 +31,10 @@ Une annonce qui rejoint un groupe existant SHALL NOT changer l'annonce principal
 #### Scenario: Carte e-mail rejoignant une annonce enrichie
 - **WHEN** une carte SeLoger neuve est fusionnée avec une annonce Bien'ici déjà enrichie par l'agent
 - **THEN** l'annonce Bien'ici reste principale et son enrichissement est conservé
+
+#### Scenario: Annonce commentée
+- **WHEN** deux annonces seules sont fusionnées, l'une enrichie par l'agent et l'autre commentée par l'utilisateur, sans autre donnée utilisateur ni adresse validée
+- **THEN** l'annonce commentée devient principale
 
 ### Requirement: Offres de toutes les sources
 L'annonce SHALL exposer la liste de ses offres. Chaque offre indique la source, l'agence, le lien, le prix, le statut et les dates de première et de dernière vue. Le statut vaut :
@@ -94,6 +98,7 @@ Lors d'une fusion, l'annonce principale SHALL reprendre les données utilisateur
 - 👎 sinon, si une annonce du groupe est rejetée ;
 - « à visiter » si une annonce l'est ;
 - les notes réunies ;
+- les commentaires de toutes les annonces du groupe, réunis dans un seul fil par ordre chronologique et comptés une seule fois dans le badge ;
 - la date de première consultation et la date d'alerte les plus anciennes.
 
 #### Scenario: Bien déjà rejeté qui revient
@@ -103,6 +108,17 @@ Lors d'une fusion, l'annonce principale SHALL reprendre les données utilisateur
 #### Scenario: Conflit de réactions
 - **WHEN** une annonce du groupe est 👍 et une autre 👎
 - **THEN** l'annonce fusionnée est 👍
+
+#### Scenario: Deux annonces commentées fusionnées
+- **WHEN** une annonce portant deux commentaires est fusionnée avec une annonce portant un commentaire
+- **THEN** la fiche du bien montre les trois commentaires par ordre chronologique, et sa carte affiche « 💬 3 »
+
+### Requirement: Commentaire envoyé sur un bien fusionné
+Un commentaire ajouté sur un bien fusionné SHALL être rattaché à son annonce principale, même si la requête désigne une annonce secondaire.
+
+#### Scenario: Commentaire envoyé sur une secondaire
+- **WHEN** l'API reçoit un commentaire pour une annonce devenue secondaire
+- **THEN** le commentaire est rattaché à l'annonce principale du groupe
 
 ### Requirement: Bien actif tant qu'une offre est active
 Un groupe SHALL rester visible comme actif tant qu'au moins une de ses offres est active, même si l'annonce principale a disparu de sa source.
@@ -155,11 +171,15 @@ L'utilisateur SHALL pouvoir marquer un doublon possible « Pas un doublon ». La
 - **THEN** les deux annonces restent séparées et la paire n'est plus proposée
 
 ### Requirement: Séparation d'une source
-L'utilisateur SHALL pouvoir séparer une offre d'un bien fusionné. L'annonce séparée redevient indépendante avec ses propres données. Le refus entre elle et le groupe est mémorisé, et le score des deux biens est recalculé.
+L'utilisateur SHALL pouvoir séparer une offre d'un bien fusionné. L'annonce séparée redevient indépendante avec ses propres données, dont les commentaires écrits sur elle avant la fusion. Les commentaires écrits sur le bien fusionné restent sur l'annonce principale. Le refus entre elle et le groupe est mémorisé, et le score des deux biens est recalculé.
 
 #### Scenario: Séparer une fusion erronée
 - **WHEN** l'utilisateur clique sur « Séparer » pour l'offre SeLoger d'un bien fusionné
 - **THEN** l'annonce SeLoger réapparaît seule dans la liste avec son prix et ses photos, et elle n'est plus fusionnée automatiquement avec ce bien
+
+#### Scenario: Commentaires après une séparation
+- **WHEN** l'annonce SeLoger portait un commentaire avant sa fusion, puis un second commentaire a été ajouté sur le bien fusionné, et l'utilisateur sépare l'offre SeLoger
+- **THEN** l'annonce SeLoger séparée montre son commentaire d'origine, et l'annonce principale garde le second commentaire
 
 ### Requirement: Filtre des doublons à valider
 L'UI SHALL signaler les annonces qui ont au moins un doublon possible en attente, par un badge sur la carte, et SHALL proposer un filtre « Doublons à valider » qui les affiche seules. Le regroupement côté navigateur par empreinte `fingerprint` et la case « Afficher les doublons » SHALL être retirés.

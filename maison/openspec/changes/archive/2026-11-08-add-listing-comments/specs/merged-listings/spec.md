@@ -30,8 +30,6 @@ Lors d'une fusion, l'annonce principale SHALL reprendre les données utilisateur
 - les commentaires de toutes les annonces du groupe, réunis dans un seul fil par ordre chronologique et comptés une seule fois dans le badge ;
 - la date de première consultation et la date d'alerte les plus anciennes.
 
-Un commentaire ajouté sur un bien fusionné SHALL être rattaché à son annonce principale, même si la requête désigne une annonce secondaire.
-
 #### Scenario: Bien déjà rejeté qui revient
 - **WHEN** une nouvelle source publie un bien que l'utilisateur avait marqué 👎
 - **THEN** l'annonce fusionnée reste 👎, masquée par le filtre par défaut, et ne porte pas le badge « Nouveau »
@@ -44,10 +42,6 @@ Un commentaire ajouté sur un bien fusionné SHALL être rattaché à son annonc
 - **WHEN** une annonce portant deux commentaires est fusionnée avec une annonce portant un commentaire
 - **THEN** la fiche du bien montre les trois commentaires par ordre chronologique, et sa carte affiche « 💬 3 »
 
-#### Scenario: Commentaire envoyé sur une secondaire
-- **WHEN** l'API reçoit un commentaire pour une annonce devenue secondaire
-- **THEN** le commentaire est rattaché à l'annonce principale du groupe
-
 ### Requirement: Séparation d'une source
 L'utilisateur SHALL pouvoir séparer une offre d'un bien fusionné. L'annonce séparée redevient indépendante avec ses propres données, dont les commentaires écrits sur elle avant la fusion. Les commentaires écrits sur le bien fusionné restent sur l'annonce principale. Le refus entre elle et le groupe est mémorisé, et le score des deux biens est recalculé.
 
@@ -58,3 +52,12 @@ L'utilisateur SHALL pouvoir séparer une offre d'un bien fusionné. L'annonce s�
 #### Scenario: Commentaires après une séparation
 - **WHEN** l'annonce SeLoger portait un commentaire avant sa fusion, puis un second commentaire a été ajouté sur le bien fusionné, et l'utilisateur sépare l'offre SeLoger
 - **THEN** l'annonce SeLoger séparée montre son commentaire d'origine, et l'annonce principale garde le second commentaire
+
+## ADDED Requirements
+
+### Requirement: Commentaire envoyé sur un bien fusionné
+Un commentaire ajouté sur un bien fusionné SHALL être rattaché à son annonce principale, même si la requête désigne une annonce secondaire.
+
+#### Scenario: Commentaire envoyé sur une secondaire
+- **WHEN** l'API reçoit un commentaire pour une annonce devenue secondaire
+- **THEN** le commentaire est rattaché à l'annonce principale du groupe
