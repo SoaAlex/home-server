@@ -1,0 +1,3 @@
+#!/bin/sh
+# Post-reboot / post-update health check of the NAS: run | boot | snapshot | show
+exec /usr/bin/python3 -I /volume1/docker/boot-check/nas_boot_check.py "$@"

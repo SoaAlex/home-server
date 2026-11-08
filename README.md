@@ -81,6 +81,7 @@ docker/
 ├── maison/        Private house-search crawler and UI (LAN and VPN only)
 ├── eurl-frais/    Monthly company-expenses CLI, run by a Hermes job
 ├── backup/        Encrypted restic backups to the RAID and Google Drive
+├── boot-check/    Post-reboot health check with a Discord verdict
 ├── hermes-vault/  Encrypted configuration of the Hermes agent
 └── docs/          Infrastructure diagrams and their generator
 ```

@@ -1,0 +1,24 @@
+# /etc/systemd/system/nas-boot-check.service  (enabled in multi-user.target)
+#
+# Runs once per boot as the NAS user, independently of the user manager, so a verdict is posted on
+# Discord even when the user-level units (Hermes, backups) did not come up. Type=simple: it never
+# delays the boot. No After=multi-user.target on purpose (it would form an ordering cycle with the
+# target that wants it).
+[Unit]
+Description=NAS post-boot health check (containers, services, Hermes) with a Discord verdict
+Documentation=file:///volume1/docker/boot-check/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=soaalex
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+# /volume1 and /home are mounted by a UGOS service: wait for them (5 min at most) before touching them.
+ExecStartPre=-/bin/sh -c 'i=0; while [ $$i -lt 300 ]; do mountpoint -q /volume1 && mountpoint -q /home && exit 0; i=$$((i+1)); sleep 1; done; exit 0'
+ExecStart=/usr/bin/python3 -I /volume1/docker/boot-check/nas_boot_check.py boot
+RuntimeMaxSec=45min
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
