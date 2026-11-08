@@ -207,6 +207,88 @@ cp teslamate/.env.example teslamate/.env
 > This repository is public. Never commit a `.env` file, a key, or personal
 > data; ship an `*.example` file instead.
 
+## Git hooks
+
+Two Git hooks guard each commit: one refuses secrets, the other enforces
+[Conventional Commits](https://www.conventionalcommits.org/). They live in
+`.githooks/`, and each clone must turn them on once.
+
+To turn on the hooks, run this command in the clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+### Secret scan
+
+The `pre-commit` hook inspects the staged changes and refuses the commit when
+any of these checks fails:
+
+- A staged file is an `.env` file, a key store, Terraform state, or a vault
+  password file. Templates such as `.env.example` pass.
+- A staged file contains the value of a secret from an `.env` file on the
+  machine. This catches secrets that have no recognizable shape, such as a
+  random path prefix.
+- [gitleaks](https://github.com/gitleaks/gitleaks) finds a secret. The file
+  `.gitleaks.toml` extends its built-in rules with Discord webhooks, WireGuard
+  keys, URLs that embed a password, and password hashes.
+- An Ansible Vault file is not encrypted.
+
+The hooks need `python3` and `gitleaks`, and refuse the commit when either is
+missing. The hook never prints a secret, only the file, the line, and the rule.
+All checks run before the commit is refused, so one attempt lists every
+problem. If a finding is a false positive, add a `gitleaks:allow` or
+`secret-guard:allow` comment on the line. For gitleaks, you can also add the
+fingerprint that it prints to `.gitleaksignore` with a comment that explains
+why. Skip the hooks with `git commit --no-verify` only after you have checked
+the change by hand, because this repository is public.
+
+To scan everything that is already committed, run:
+
+```bash
+gitleaks git --redact -v .
+python3 -I .githooks/secret-guard.py --history
+```
+
+To scan the work tree instead, replace `--history` with `--tree`.
+
+To install gitleaks on macOS, run `brew install gitleaks`. On the NAS, install
+the release binary and check its checksum:
+
+```bash
+tag=v8.30.1
+cd "$(mktemp -d)"
+base=https://github.com/gitleaks/gitleaks/releases/download/$tag
+curl -fsSLO "$base/gitleaks_${tag#v}_linux_x64.tar.gz"
+curl -fsSLO "$base/gitleaks_${tag#v}_checksums.txt"
+sha256sum --ignore-missing -c "gitleaks_${tag#v}_checksums.txt"
+tar -xzf "gitleaks_${tag#v}_linux_x64.tar.gz" gitleaks
+install -m 755 gitleaks ~/.local/bin/gitleaks
+```
+
+### Commit messages
+
+The `commit-msg` hook requires the first line of each message to follow
+Conventional Commits:
+
+```text
+type(scope): description
+```
+
+The `type` is `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`,
+`build`, `ci`, `chore`, or `revert`. The `(scope)` is optional and names the
+stack, for example `maison` or `pihole`. Add `!` before the colon for a
+breaking change, and leave a blank line before the body. Merge commits,
+`git revert` messages, and `fixup!` commits skip the format check. The hook
+also scans every message for secrets, because commit messages are public. For
+example:
+
+```text
+feat(maison): add a surface filter
+fix(pihole): raise the rate limit
+chore!: drop the Minecraft stack
+```
+
 ## Start the stacks
 
 Start the shared database first, then the stacks that depend on it. To start

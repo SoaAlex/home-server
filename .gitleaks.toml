@@ -1,0 +1,46 @@
+# Gitleaks configuration, used by .githooks/pre-commit, .githooks/commit-msg and by
+# full scans:
+#
+#   gitleaks git --redact -v .        # whole history
+#   gitleaks dir --redact -v <dir>    # a directory tree
+#
+# The built-in rules stay on; the rules below add what this stack uses and the
+# built-in set lacks.
+title = "home-server"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "discord-webhook-url"
+description = "Discord webhook URL (the token is part of the path)"
+regex = '''(?i)https?://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/(?:v\d+/)?webhooks/\d{17,20}/[A-Za-z0-9_-]{40,}'''
+keywords = ["webhooks"]
+
+[[rules]]
+id = "wireguard-key"
+description = "WireGuard PrivateKey or PresharedKey"
+regex = '''(?i)(?:private|preshared)[_ -]?key["']?\s*[:=]\s*["']?([A-Za-z0-9+/]{43}=)'''
+secretGroup = 1
+entropy = 3.5
+keywords = ["privatekey", "presharedkey", "private_key", "preshared_key", "private key", "preshared key", "private-key", "preshared-key"]
+
+[[rules]]
+id = "url-credentials"
+description = "Password embedded in a URL (scheme://user:password@host)"
+regex = '''(?i)\b[a-z][a-z0-9+.-]{1,20}://[^\s:/@"'<>]{0,64}:([^\s@/"'<>]{8,})@[a-z0-9][^\s/"'<>]*'''
+secretGroup = 1
+entropy = 3.0
+keywords = ["://"]
+
+[[rules.allowlists]]
+description = "placeholders and variable references"
+regexTarget = "secret"
+regexes = ['''^\$\{?[A-Za-z_]''', '''^\{\{''', '''^%[A-Za-z_]''']
+stopwords = ["password", "passwd", "changeme", "example", "secret", "yourpass", "xxxxxxxx"]
+
+[[rules]]
+id = "password-hash"
+description = "Password hash (Balloon, bcrypt, Argon2, PBKDF2, crypt SHA-256 or SHA-512)"
+regex = '''\$(?:2[aby]|argon2(?:id|i|d)|BALLOON-[A-Z0-9]+|pbkdf2(?:-[a-z0-9]+)?|[56])\$[^\s"']{20,}'''
+keywords = ["$balloon", "$argon2", "$pbkdf2", "$2a$", "$2b$", "$2y$", "$5$", "$6$"]

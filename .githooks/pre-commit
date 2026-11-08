@@ -1,0 +1,82 @@
+#!/bin/sh
+# pre-commit: block a commit whose staged changes contain a secret.
+#
+#   1. secret-guard.py: no staged file is a secret carrier by name (.env files,
+#      Terraform state, key stores, vault password files; templates such as
+#      .env.example pass), and no staged content holds the value of a secret from a
+#      git-ignored .env file. Catches secrets that have no recognizable shape.
+#   2. gitleaks scan of the staged diff (added lines only), configured by
+#      .gitleaks.toml. Findings are printed redacted.
+#   3. Ansible Vault files must be encrypted
+#      (ansible/scripts/check-vault-encrypted.sh).
+#
+# Every check runs, then the commit is refused if any failed. A missing python3 or
+# gitleaks refuses the commit too: an unchecked commit is not a clean one.
+#
+# False positive: put `gitleaks:allow` (or `secret-guard:allow`) in a comment on the
+# line, or add the finding's fingerprint to .gitleaksignore. `git commit
+# --no-verify` skips this hook; the repository is public, so do not use it without
+# the owner's approval.
+set -eu
+
+hooks_dir=$(cd "$(dirname "$0")" && pwd)
+. "$hooks_dir/lib.sh"
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+status=0
+
+# --- 1. file names and .env values ------------------------------------------
+python=$(find_python) || python=
+if [ -z "$python" ]; then
+  echo "pre-commit: python3 not found, so file names and .env values cannot be checked." >&2
+  status=1
+elif ! "$python" -I "$hooks_dir/secret-guard.py" --staged; then
+  status=1
+fi
+
+# --- 2. gitleaks scan of the staged diff ------------------------------------
+gitleaks=$(find_gitleaks) || gitleaks=
+if [ -z "$gitleaks" ]; then
+  {
+    echo "pre-commit: gitleaks not found, so the staged changes cannot be scanned."
+    echo "Install it (macOS: brew install gitleaks; NAS: see README.md, Git hooks),"
+    echo "or point GITLEAKS_BIN at the binary."
+  } >&2
+  status=1
+else
+  config=$(find_gitleaks_config "$root" "$hooks_dir") || config=
+  rc=0
+  if [ -n "$config" ]; then
+    "$gitleaks" git --pre-commit --staged --redact --verbose --no-banner --no-color \
+      --log-level warn --config "$config" || rc=$?
+  else
+    echo "pre-commit: warning: .gitleaks.toml not found, using gitleaks' built-in rules only." >&2
+    "$gitleaks" git --pre-commit --staged --redact --verbose --no-banner --no-color \
+      --log-level warn || rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    {
+      echo
+      echo "pre-commit: gitleaks reported a problem (exit $rc)."
+      echo "Real secret: remove it from the staged change, and rotate it if it ever left this machine."
+      echo "False positive: add 'gitleaks:allow' in a comment on the line, or its Fingerprint"
+      echo "(shown above) to .gitleaksignore."
+    } >&2
+    status=1
+  fi
+fi
+
+# --- 3. Ansible Vault files must be encrypted -------------------------------
+vault_check="$root/ansible/scripts/check-vault-encrypted.sh"
+if [ -f "$vault_check" ]; then
+  if ! bash "$vault_check" --staged >/dev/null; then
+    status=1
+  fi
+else
+  echo "pre-commit: warning: ansible/scripts/check-vault-encrypted.sh not found, vault files not checked." >&2
+fi
+
+if [ "$status" -ne 0 ]; then
+  echo "pre-commit: commit refused." >&2
+fi
+exit "$status"

@@ -1,0 +1,115 @@
+#!/bin/sh
+# commit-msg: the message must be a Conventional Commits 1.0.0 subject and must not
+# hold a secret (commit messages are public too).
+#
+#   <type>[(<scope>)][!]: <description>
+#
+#   types, lowercase: feat fix docs style refactor perf test build ci chore revert
+#
+# Exempt from the format (still scanned for secrets): merge commits ("Merge ..."),
+# git revert ('Revert "..."'), git's re-apply of a revert ('Reapply "..."') and
+# autosquash markers ("fixup! ", "squash! ", "amend! "). `git commit --no-verify`
+# skips this hook.
+#
+# It is a commit-msg hook, not a pre-commit one: git only has the message once the
+# commit is being created.
+set -eu
+LC_ALL=C
+export LC_ALL
+
+msg_file=${1:?usage: commit-msg <message-file>}
+hooks_dir=$(cd "$(dirname "$0")" && pwd)
+. "$hooks_dir/lib.sh"
+
+# git drops comment lines, and everything under the scissors line of `git commit -v`,
+# only when an editor ran (git then exports GIT_EDITOR=:). With -m or -F it keeps
+# them, so "#123 fix login" really is the subject.
+case ${GIT_EDITOR-} in
+  :) strip=0 ;;
+  *) strip=1 ;;
+esac
+comment=$(git config --get core.commentString 2>/dev/null || git config --get core.commentChar 2>/dev/null || true)
+case $comment in
+  '' | auto) comment='#' ;;
+esac
+
+# The message as git keeps it: CR removed, no leading blank lines.
+msg=$(awk -v cc="$comment" -v strip="$strip" '
+  { sub(/\r$/, "") }
+  strip == 1 && index($0, cc) == 1 && $0 ~ / -+ >8 -+[ \t]*$/ { exit }
+  strip == 1 && index($0, cc) == 1 { next }
+  !started && $0 ~ /^[ \t]*$/ { next }
+  { started = 1; print }
+' "$msg_file")
+subject=$(printf '%s\n' "$msg" | sed -n '1p')
+second=$(printf '%s\n' "$msg" | sed -n '2p')
+
+# Empty message: git aborts the commit by itself.
+[ -n "$subject" ] || exit 0
+
+exempt=0
+case $subject in
+  "Merge "* | 'Revert "'* | 'Reapply "'* | "fixup! "* | "squash! "* | "amend! "*) exempt=1 ;;
+esac
+
+if [ "$exempt" -eq 0 ]; then
+  types='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+  pattern='^('"$types"')(\([a-z0-9][a-z0-9._/,-]*\))?!?: [^[:space:]]'
+  if ! printf '%s\n' "$subject" | grep -Eq "$pattern"; then
+    type_list=$(printf '%s' "$types" | tr '|' ' ')
+    cat >&2 <<EOF
+commit-msg: the subject is not a Conventional Commit:
+
+  $subject
+
+Expected: <type>[(<scope>)][!]: <description>, with a lowercase type and scope
+  types:    $type_list
+  examples: feat(maison): add a surface filter
+            fix(pihole): raise the rate limit
+            chore: update .gitignore
+EOF
+    exit 1
+  fi
+  case $second in
+    *[![:space:]]*)
+      echo "commit-msg: leave a blank line between the subject and the body." >&2
+      exit 1
+      ;;
+  esac
+  length=$(printf '%s' "$subject" | wc -m | tr -d ' ')
+  if [ "$length" -gt 100 ]; then
+    echo "commit-msg: warning: the subject is $length characters; keep it under 100 and move details to the body." >&2
+  fi
+fi
+
+# --- secrets in the message --------------------------------------------------
+status=0
+python=$(find_python) || python=
+if [ -z "$python" ]; then
+  echo "commit-msg: python3 not found, so the message cannot be checked for secrets." >&2
+  status=1
+elif ! "$python" -I "$hooks_dir/secret-guard.py" --message "$msg_file"; then
+  status=1
+fi
+
+gitleaks=$(find_gitleaks) || gitleaks=
+if [ -z "$gitleaks" ]; then
+  echo "commit-msg: gitleaks not found, so the message cannot be checked for secrets." >&2
+  status=1
+else
+  root=$(git rev-parse --show-toplevel)
+  config=$(find_gitleaks_config "$root" "$hooks_dir") || config=
+  rc=0
+  if [ -n "$config" ]; then
+    printf '%s\n' "$msg" | "$gitleaks" stdin --redact --verbose --no-banner --no-color \
+      --log-level warn --config "$config" || rc=$?
+  else
+    printf '%s\n' "$msg" | "$gitleaks" stdin --redact --verbose --no-banner --no-color \
+      --log-level warn || rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo "commit-msg: gitleaks found a secret in the message (exit $rc); the commit is refused." >&2
+    status=1
+  fi
+fi
+exit "$status"
