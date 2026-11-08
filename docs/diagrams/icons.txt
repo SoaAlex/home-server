@@ -1,0 +1,52 @@
+# Logos for the diagrams, one fetch_icons.py spec per line:
+#   name            fetched by name from svgl, devicon, or gilbarbara/logos
+#   name:slug       same, with a different slug
+#   name=URL        an official file, when no source has the logo
+#   name:lucide/x   a Lucide pictogram, for things that have no brand
+# Logos are downloaded at build time; they are not stored in this repository.
+
+# Found by name
+docker
+postgresql
+redis
+cloudflare
+wireguard
+grafana
+discord
+github
+android
+apple
+python
+gdrive:google-drive
+onedrive:microsoft-onedrive
+
+# Official files from each project
+pihole=https://raw.githubusercontent.com/pi-hole/web/master/img/logo.svg
+npm=https://raw.githubusercontent.com/NginxProxyManager/nginx-proxy-manager/develop/frontend/public/images/logo-no-text.svg
+vaultwarden=https://raw.githubusercontent.com/dani-garcia/vaultwarden/main/resources/vaultwarden-icon.svg
+frigate=https://raw.githubusercontent.com/blakeblackshear/frigate/dev/web/images/branding/favicon.svg
+teslamate=https://raw.githubusercontent.com/teslamate-org/teslamate/main/elixir/priv/static/images/logo_icon.svg
+mosquitto=https://raw.githubusercontent.com/eclipse-mosquitto/mosquitto/master/logo/mosquitto-logo-only.svg
+wstunnel=https://raw.githubusercontent.com/erebe/wstunnel/main/docs/logo_wstunnel.png
+restic=https://raw.githubusercontent.com/restic/restic/master/doc/logo/logo.png
+rclone=https://raw.githubusercontent.com/rclone/rclone/master/graphics/logo/svg/logo_symbol_color.svg
+age=https://raw.githubusercontent.com/FiloSottile/age/main/logo/logo.svg
+aiostreams=https://raw.githubusercontent.com/Viren070/AIOStreams/main/branding/SVG/Logo%20Gradient.svg
+aiometadata=https://raw.githubusercontent.com/cedya77/aiometadata/dev/public/logo.png
+hermes=https://raw.githubusercontent.com/NousResearch/hermes-agent/main/assets/icon-master.svg
+hermes_dark=https://raw.githubusercontent.com/NousResearch/hermes-agent/main/assets/icon-master-dark.svg
+
+# Pictograms (no brand)
+house:lucide/house
+radar:lucide/radar
+router:lucide/router
+hdd:lucide/hard-drive
+server:lucide/server
+clock:lucide/clock
+caltime:lucide/calendar-clock
+db:lucide/database
+waypoints:lucide/waypoints
+archive:lucide/archive
+globe:lucide/globe
+cpu:lucide/cpu
+image:lucide/image

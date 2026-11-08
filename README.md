@@ -10,17 +10,15 @@ To rebuild everything after an OS reset or a NAS swap, follow
 
 ## Infrastructure at a glance
 
-The six diagrams below show what runs on the NAS and what the internet can
-reach. A black **PUBLIC** badge marks a service reachable from the internet,
-and a dashed **PRIVATE** badge marks a service kept to the LAN and the VPN.
-Orange marks open doors and blocked paths.
+The seven diagrams below show what runs on the NAS and what the internet can
+reach. A blue outline marks a service that the internet can reach. Blue arrows
+follow the public path, gray arrows are internal flows, and dashed arrows are
+fallbacks, backups, or alerts.
 
 <!-- prettier-ignore -->
 > [!NOTE]
 > These are public versions: they leave out LAN addresses, VPN peers, and
-> known weak spots. Open
-> [`docs/diagrams/infrastructure.html`](docs/diagrams/infrastructure.html)
-> locally for the interactive page, or regenerate the images as described in
+> known weak spots. To regenerate the images, follow
 > [`docs/diagrams/README.md`](docs/diagrams/README.md).
 
 ### Overview
@@ -29,42 +27,44 @@ Only two doors are open to the internet: Nginx Proxy Manager behind Cloudflare,
 and WireGuard. Everything else, including the Hermes agent and the backups,
 stays behind the router.
 
-![Overview: clients reach the published apps through Cloudflare and Nginx Proxy Manager, and the private apps through WireGuard; Hermes and nas-backup stay private](docs/diagrams/01-overview.png)
+![Overview: visitors reach Nginx Proxy Manager through Cloudflare and the router, phones and laptops reach WireGuard through the router, and both lead to the Docker stacks; the Hermes agent talks to Discord and runs jobs on the stacks, and nas-backup copies the data to Google Drive](docs/diagrams/01-overview.png)
 
 <details>
 <summary>Detail diagrams: network access, containers, Hermes, backups, and storage</summary>
 
 #### Network access
 
-HTTPS goes through Cloudflare and the router to Nginx Proxy Manager. A phone
-connects to WireGuard directly. From a network that blocks UDP, a laptop wraps
-WireGuard in HTTPS through wstunnel.
+HTTPS goes through Cloudflare and the router to Nginx Proxy Manager, which
+forwards to the published apps. A phone connects to WireGuard directly. From a
+network that blocks UDP, a laptop wraps WireGuard in HTTPS through wstunnel.
 
-![Network access: HTTPS through Cloudflare and the router to NPM, WireGuard directly or wrapped in wstunnel, and Pi-hole DNS for the LAN and VPN peers](docs/diagrams/02-network-access.png)
+![Public access: a browser reaches Cloudflare over HTTPS, Cloudflare forwards to the router on port 443, and the router forwards to Nginx Proxy Manager, which serves Vaultwarden, Grafana, AIOStreams, and AIOMetadata](docs/diagrams/02-public-access.png)
+
+![Private access: a phone reaches WireGuard through the router on UDP 51820, a laptop wraps WireGuard in HTTPS through Nginx Proxy Manager and wstunnel, and WireGuard reaches the private apps and the Pi-hole DNS](docs/diagrams/03-private-access.png)
 
 #### Containers
 
-The running containers, grouped by who can reach them.
+The running containers, grouped by Compose stack.
 
-![Docker containers grouped by exposure: Vaultwarden, AIOStreams, and TeslaMate published behind NPM; Frigate, code-server, maison, and Pi-hole kept to LAN and VPN; all databases in common-postgres](docs/diagrams/03-containers.png)
+![Docker containers in four Compose stacks: teslamate, maison, common (PostgreSQL and Redis), and home-server; a blue outline marks Grafana, AIOMetadata, AIOStreams, Vaultwarden, Nginx Proxy Manager, and WireGuard as reachable from the internet, and every database lives in common-postgres](docs/diagrams/04-containers.png)
 
 #### Hermes agent
 
 What talks to the Hermes agent, and what the agent drives.
 
-![Hermes agent: Discord messages reach the gateway, which runs the scheduled jobs that call the NAS tools; the dashboard is LAN and VPN only; the configuration is sealed with age to GitHub](docs/diagrams/04-hermes-agent.png)
+![Hermes agent: Discord messages reach the gateway, which schedules the jobs that drive maison and eurl-frais and calls the LLM APIs and MCP servers; the dashboard is reached from a phone app over the LAN and VPN only](docs/diagrams/05-hermes-agent.png)
 
 #### Backups
 
 Everything that leaves the NAS for backup is encrypted by restic.
 
-![Backups: Postgres dumps, SQLite copies, and configuration go nightly into a restic repository on the RAID, copied to Google Drive; a weekly job checks and test-restores; a monthly job uploads the RAID data](docs/diagrams/05-backups.png)
+![Backups: Postgres dumps, volume1, the RAID data, and the Hermes files feed nas-backup, which writes an encrypted restic repository on the RAID and copies it to Google Drive through rclone; alerts go to Discord, and the Hermes configuration is sealed with age and pushed to GitHub](docs/diagrams/06-backups.png)
 
 #### Storage
 
 Where the data lives, and how it leaves the NAS.
 
-![Storage: volume1 SSD holds Docker and the VMs, the volume2 RAID 5 holds documents, photos, home folders, and the backup repository](docs/diagrams/06-storage.png)
+![Storage: the volume1 SSD holds the Docker volumes, the VMs, and this repository; the volume2 RAID 5 holds the documents, photos, home folders, and the backup repository; documents sync to OneDrive, restic copies go to Google Drive, and the repository is pushed to GitHub without secrets](docs/diagrams/07-storage.png)
 
 </details>
 
