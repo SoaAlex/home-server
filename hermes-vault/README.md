@@ -26,7 +26,23 @@ python3 -I hermes-vault/seal.py              # re-seals only the archives whose 
 git add hermes-vault/*.age && git commit -m "hermes-vault: update"
 ```
 
-## Restore on a new machine
+## Restore with Ansible (recommended)
+
+The `hermes` role of `ansible/` installs Hermes when it's absent, restores
+these archives, and starts the services once `~/.hermes/.env` is back. It
+decrypts on the machine that runs Ansible, so the private key never lands on
+the NAS. Run it from the Mac, with the key in a local file:
+
+```bash
+cd ansible
+ansible-playbook playbooks/site.yml --tags hermes -e hermes_age_identity=~/identity.txt
+```
+
+It never overwrites an existing `~/.hermes/config.yaml` unless you add
+`-e hermes_restore_overwrite=true`, and it never overwrites files in
+`~/.local/bin` (the wrappers there come from the repo).
+
+## Restore by hand on a new machine
 
 1. Install Hermes (<https://hermes-agent.nousresearch.com/docs>) and `age` ≥ 1.3.
 2. Write the private key to a file only you can read: `identity.txt`, `chmod 600`.

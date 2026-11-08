@@ -1,0 +1,65 @@
+- name: Look for an existing Hermes install
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ hermes_install_markers }}"
+  register: hermes_exe
+
+# The installer also UPDATES an existing checkout to the latest stable:
+# it runs only when no trace of an install exists.
+- name: Install Hermes (absent only, never updated here)
+  when: hermes_exe.results | selectattr('stat.exists') | list | length == 0
+  block:
+    - name: Download the official installer
+      ansible.builtin.get_url:
+        url: "{{ hermes_install_url }}"
+        dest: "{{ nas_home }}/.cache/hermes-install.sh"
+        mode: "0700"
+
+    - name: Run the installer (non-interactive)
+      ansible.builtin.command: bash {{ nas_home }}/.cache/hermes-install.sh --non-interactive
+      changed_when: true
+
+- name: Restore the configuration from hermes-vault
+  ansible.builtin.include_tasks: restore.yml
+  when: hermes_age_identity | length > 0
+
+- name: Say the restore was skipped
+  ansible.builtin.debug:
+    msg: >-
+      hermes-vault restore skipped (no key). To restore, pass
+      -e hermes_age_identity=<path of the age identity on the controller>.
+  when: hermes_age_identity | length == 0
+
+- name: Look for the Hermes secrets
+  ansible.builtin.stat:
+    path: "{{ hermes_home }}/.env"
+  register: hermes_env
+
+- name: Look for the Hermes units
+  ansible.builtin.stat:
+    path: "{{ hermes_unit_dir }}/{{ item }}.service"
+  loop: "{{ hermes_services }}"
+  register: hermes_units
+
+- name: Enable and start the Hermes services
+  ansible.builtin.systemd_service:
+    name: "{{ item.item }}.service"
+    scope: user
+    enabled: true
+    state: started
+  environment:
+    XDG_RUNTIME_DIR: /run/user/{{ nas_uid }}
+  loop: "{{ hermes_units.results | selectattr('stat.exists') | list }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: hermes_env.stat.exists
+
+- name: Say what keeps the services stopped
+  ansible.builtin.debug:
+    msg: >-
+      {% if not hermes_env.stat.exists %}{{ hermes_home }}/.env is missing: the Hermes services were not started.
+      Restore ~/.hermes/.env and auth.json from restic (playbooks/restore.yml), then rerun --tags hermes.
+      {% endif %}{% for u in hermes_units.results if not u.stat.exists %}{{ u.item }}.service is missing
+      ({{ 'hermes gateway install --if-missing' if u.item == 'hermes-gateway' else 'restore it from hermes-vault' }}).
+      {% endfor %}
+  when: not hermes_env.stat.exists or (hermes_units.results | rejectattr('stat.exists') | list | length > 0)

@@ -1,0 +1,18 @@
+hermes_home: "{{ nas_home }}/.hermes"
+hermes_bin_dir: "{{ nas_home }}/.local/bin"
+hermes_unit_dir: "{{ nas_home }}/.config/systemd/user"
+# Presence check for the install step. Fixed paths on purpose: they do not
+# follow hermes_home / hermes_bin_dir, so a test HOME never triggers an install.
+hermes_install_markers:
+  - "{{ nas_home }}/.local/bin/hermes"
+  - "{{ nas_home }}/.hermes/hermes-agent"
+# Official installer (docs: getting-started/installation), non-interactive.
+hermes_install_url: https://hermes-agent.nousresearch.com/install.sh
+# Restore from hermes-vault/: path of the age identity ON THE CONTROLLER.
+# Decryption happens there; the key is never copied to the NAS.
+hermes_age_identity: ""
+hermes_vault_dir: "{{ preflight_controller_repo }}/hermes-vault"
+hermes_vault_archives: [hermes-config, hermes-plugins]
+# Overwrite an existing ~/.hermes/config.yaml with the archived files.
+hermes_restore_overwrite: false
+hermes_services: [hermes-gateway, hermes-dashboard]

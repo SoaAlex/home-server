@@ -106,7 +106,7 @@ Copiées depuis le repo (`backup/systemd/*`, unités Hermes depuis la config res
 
 ### D8. Hermes
 
-Ordre de préférence pour la configuration : (1) restauration restic de `~/.hermes` (complète : secrets et historique compris, voir `restore.yml`) ; (2) sinon `hermes-vault/` (config, skills, mémoires, jobs ; pas de secrets). Pour (2), le déchiffrement age se fait sur le contrôleur (`delegate_to: localhost`) avec `hermes_age_identity=<chemin local>`, l'archive en clair est copiée, dépaquetée puis supprimée : depuis le Mac, la clé ne touche jamais le NAS. Installation du code par la méthode officielle de la doc Hermes, seulement si l'exécutable est absent.
+Ordre de préférence pour la configuration : (1) restauration restic de `~/.hermes` (complète : secrets et historique compris, voir `restore.yml`) ; (2) sinon `hermes-vault/` (config, skills, mémoires, jobs ; pas de secrets). Pour (2), le déchiffrement age se fait sur le contrôleur (`delegate_to: localhost`) avec `hermes_age_identity=<chemin local>` ; le contrôleur décompresse aussi le xz (ni le NAS ni le conteneur n'ont `xz`), envoie un `.tar` simple que le NAS dépaquette, puis tout le clair est supprimé des deux côtés : depuis le Mac, la clé ne touche jamais le NAS. Copie par `cp -a` : `~/.local/bin` n'est jamais écrasé (les wrappers viennent du repo), le reste seulement avec `hermes_restore_overwrite=true`. Rien n'est déchiffré en `--check`. Installation du code par la méthode officielle de la doc Hermes, seulement si l'exécutable est absent.
 
 ### D9. Terraform
 
@@ -156,5 +156,5 @@ Retour arrière : supprimer `ansible/` et `terraform/` ; les fichiers root modif
 ## Open Questions
 
 - Qui fait la DDNS (la Livebox, un conteneur, Cloudflare) et quels enregistrements elle met à jour : à relever pendant l'import, ne change que la liste des `ignore_changes`.
-- Commande exacte d'installation de Hermes et de génération des unités (`hermes gateway install`, `hermes dashboard`) : à prendre dans la doc au moment du rôle.
+- ~~Commande d'installation de Hermes~~ : résolu (tâche 5.1, doc « Installation ») : `curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --non-interactive` (le rôle télécharge le script puis le lance). Attention : sur un checkout existant ce script **met à jour** vers la dernière stable ; le rôle ne le lance que si ni `~/.local/bin/hermes` ni `~/.hermes/hermes-agent` n'existent (incident du 2026-11-08 : un test avec un HOME factice l'a lancé et a fait passer Hermes de v0.22.5 à v0.23.0). Unités : `hermes gateway install --if-missing` crée `hermes-gateway.service` ; `hermes-dashboard.service` est écrite à la main (clone de l'unité gateway, `hermes dashboard --host 0.0.0.0 --port 9119 --no-open --skip-build`) et revient par `hermes-vault/` (`systemd-user/`).
 - ~~Nom de l'unité qui démarre Docker sous UGOS~~ : résolu, voir D6 (`docker.service` via `docker.socket`, `docker_serv` = gestionnaire UGOS).

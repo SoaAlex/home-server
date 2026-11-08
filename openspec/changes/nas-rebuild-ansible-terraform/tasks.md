@@ -44,11 +44,11 @@ Règles pour toute la mise en œuvre : rien n'est appliqué en réel sur le NAS 
 
 ## 5. Agent Hermes
 
-- [ ] 5.1 Relever dans la doc Hermes la commande d'installation et de génération des unités, et la consigner dans `design.md`
-- [ ] 5.2 Rôle `hermes` : installation si l'exécutable est absent, rien sinon ; vérifier `changed=0` sur le NAS
+- [x] 5.1 Relever dans la doc Hermes la commande d'installation et de génération des unités, et la consigner dans `design.md`
+- [x] 5.2 Rôle `hermes` : installation si l'exécutable est absent, rien sinon ; vérifier `changed=0` sur le NAS
 - [ ] 5.3 Restauration depuis `hermes-vault/` : déchiffrement sur le contrôleur (`hermes_age_identity`), copie, dépaquetage, suppression du clair, pas d'écrasement sans `hermes_restore_overwrite` ; vérifier en répétition vers un `HOME` de test que les fichiers égalent ceux de `seal.py --verify` et qu'aucun fichier de clé ni archive en clair ne reste sur le NAS
-- [ ] 5.4 Activation de `hermes-gateway` et `hermes-dashboard` seulement si les unités et `~/.hermes/.env` existent, message sinon ; vérifier zéro écart sur le NAS et le message avec un `.env` absent (HOME de test)
-- [ ] 5.5 Mettre à jour `hermes-vault/README.md` pour renvoyer vers le rôle et vérifier que les commandes citées fonctionnent
+- [x] 5.4 Activation de `hermes-gateway` et `hermes-dashboard` seulement si les unités et `~/.hermes/.env` existent, message sinon ; vérifier zéro écart sur le NAS et le message avec un `.env` absent (HOME de test)
+- [x] 5.5 Mettre à jour `hermes-vault/README.md` pour renvoyer vers le rôle et vérifier que les commandes citées fonctionnent
 
 ## 6. Vérification de fin de convergence et adoption
 

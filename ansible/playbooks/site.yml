@@ -17,3 +17,4 @@
     - {role: legacy_cron, tags: [legacy_cron, host]}
     - {role: secrets, tags: [secrets]}
     - {role: stacks, tags: [stacks]}
+    - {role: hermes, tags: [hermes]}

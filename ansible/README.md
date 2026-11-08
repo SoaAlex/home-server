@@ -104,6 +104,7 @@ difference without changing anything; files copied from the repo show a
 | `backup_units` | `backup_units` | `nas-backup*` user units and their timers. | Copies the repo files unchanged. |
 | `legacy_cron` | `legacy_cron` | Removes the root cron lines listed in `legacy_cron_lines`. | Does nothing without `-e cleanup_legacy_cron=true`. |
 | `secrets` | `secrets` | Writes each `.env` from the vault, `1000:10`, mode 600. | Fails before writing when a key of `.env.example` is missing; `no_log` everywhere. |
+| `hermes` | `hermes` | Installs Hermes when no install exists; restores `hermes-vault/` with `-e hermes_age_identity=<key on the controller>`; starts `hermes-gateway` and `hermes-dashboard` when `~/.hermes/.env` exists. | Never updates Hermes; never overwrites `config.yaml` without `-e hermes_restore_overwrite=true` nor `~/.local/bin`; decrypts on the controller only, nothing in `--check`. |
 | `stacks` | `stacks` | Starts `common`, `home-server`, `teslamate`, and `maison` in that order; builds `maison`, `eurl-frais`, and `nas-backup` images when absent. | Recreates only services that differ; never pulls unless `-e stacks_pull=true`; refuses empty critical data unless `-e allow_empty_data=true`. |
 
 `--tags host` runs every host role (everything except `secrets`).

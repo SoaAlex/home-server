@@ -1,0 +1,97 @@
+# Decrypt on the controller, send a plain .tar, extract on the NAS, copy
+# into place, then delete every plaintext copy on both sides.
+- name: Look for an existing configuration
+  ansible.builtin.stat:
+    path: "{{ hermes_home }}/config.yaml"
+  register: hermes_config
+
+- name: Say an existing configuration is kept
+  ansible.builtin.debug:
+    msg: >-
+      {{ hermes_home }}/config.yaml exists: nothing restored. Pass
+      -e hermes_restore_overwrite=true to overwrite it with the archived files.
+  when: hermes_config.stat.exists and not hermes_restore_overwrite | bool
+
+- name: Say the restore does not run in check mode
+  ansible.builtin.debug:
+    msg: "--check: hermes-vault would be restored into {{ hermes_home }} (nothing decrypted in check mode)."
+  when: ansible_check_mode and (not hermes_config.stat.exists or hermes_restore_overwrite | bool)
+
+- name: Restore
+  when: not ansible_check_mode and (not hermes_config.stat.exists or hermes_restore_overwrite | bool)
+  block:
+    - name: Create a private scratch directory on the controller
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: hermes-vault.
+      delegate_to: localhost
+      become: false
+      register: hermes_ctl_tmp
+
+    - name: Decrypt the archives on the controller
+      ansible.builtin.command:
+        argv: [age, -d, -i, "{{ hermes_age_identity }}", -o, "{{ hermes_ctl_tmp.path }}/{{ item }}.tar.xz",
+               "{{ hermes_vault_dir }}/{{ item }}.tar.xz.age"]
+      loop: "{{ hermes_vault_archives }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    # The NAS has no system xz: decompress here, send a plain tar.
+    - name: Decompress on the controller
+      ansible.builtin.command:
+        argv: [python3, -I, -c, "import lzma, shutil, sys; shutil.copyfileobj(lzma.open(sys.argv[1]), open(sys.argv[2], 'wb'))",
+               "{{ hermes_ctl_tmp.path }}/{{ item }}.tar.xz", "{{ hermes_ctl_tmp.path }}/{{ item }}.tar"]
+      loop: "{{ hermes_vault_archives }}"
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Create a private scratch directory on the NAS
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: hermes-vault.
+      register: hermes_nas_tmp
+
+    - name: Send and extract the archives
+      ansible.builtin.unarchive:
+        src: "{{ hermes_ctl_tmp.path }}/{{ item }}.tar"
+        dest: "{{ hermes_nas_tmp.path }}"
+      loop: "{{ hermes_vault_archives }}"
+
+    - name: Create the destination directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: ["{{ hermes_home }}", "{{ hermes_bin_dir }}", "{{ hermes_unit_dir }}"]
+
+    # cp -a keeps modes and times. ~/.local/bin is never overwritten: the
+    # wrappers there come from the repo (role user_tools), the archive may hold
+    # older copies. The rest is overwritten only with hermes_restore_overwrite.
+    - name: Copy the files into place
+      ansible.builtin.command:
+        argv: "{{ ['cp', '-a'] + ([] if (hermes_restore_overwrite | bool and item.src != 'local-bin') else ['--no-clobber'])
+                  + [hermes_nas_tmp.path ~ '/' ~ item.src ~ '/.', item.dest ~ '/'] }}"
+      loop:
+        - {src: hermes, dest: "{{ hermes_home }}"}
+        - {src: local-bin, dest: "{{ hermes_bin_dir }}"}
+        - {src: systemd-user, dest: "{{ hermes_unit_dir }}"}
+      loop_control:
+        label: "{{ item.src }} -> {{ item.dest }}"
+      changed_when: true
+  always:
+    - name: Delete the plaintext on the NAS
+      ansible.builtin.file:
+        path: "{{ hermes_nas_tmp.path }}"
+        state: absent
+      when: hermes_nas_tmp.path is defined
+
+    - name: Delete the plaintext on the controller
+      ansible.builtin.file:
+        path: "{{ hermes_ctl_tmp.path }}"
+        state: absent
+      delegate_to: localhost
+      become: false
+      check_mode: false
+      when: hermes_ctl_tmp.path is defined
