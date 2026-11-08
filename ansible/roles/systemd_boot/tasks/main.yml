@@ -1,0 +1,69 @@
+# User services (Hermes, nas-backup) start after the volumes are mounted,
+# without a login; nas-boot-check posts a verdict after each boot.
+- name: Create the user@1000 drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/user@{{ nas_uid }}.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: Install the wait-for-mounts drop-in
+  ansible.builtin.copy:
+    src: "{{ systemd_boot_src }}/10-wait-mounts.conf"
+    dest: /etc/systemd/system/user@{{ nas_uid }}.service.d/10-wait-mounts.conf
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  become: true
+  register: systemd_boot_dropin
+
+- name: Install nas-boot-check.service
+  ansible.builtin.copy:
+    src: "{{ systemd_boot_src }}/nas-boot-check.service"
+    dest: /etc/systemd/system/nas-boot-check.service
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  become: true
+  register: systemd_boot_unit
+
+- name: Show what would change
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: show_diff
+  vars:
+    show_diff_results: "{{ [systemd_boot_dropin, systemd_boot_unit] }}"
+
+- name: Enable nas-boot-check at boot (not started now)
+  ansible.builtin.systemd_service:
+    name: nas-boot-check.service
+    enabled: true
+    daemon_reload: "{{ systemd_boot_dropin is changed or systemd_boot_unit is changed }}"
+  become: true
+
+- name: Read the linger state
+  ansible.builtin.command: loginctl show-user {{ nas_user }} --property=Linger --value
+  register: systemd_boot_linger
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Enable linger
+  ansible.builtin.command: loginctl enable-linger {{ nas_user }}
+  become: true
+  changed_when: true
+  when: systemd_boot_linger.stdout != 'yes'
+
+# Tailscale stays off (unpatched critical CVE, user decision 2026-10): never started.
+- name: Keep tailscaled stopped and disabled
+  ansible.builtin.systemd_service:
+    name: tailscaled.service
+    enabled: false
+    state: stopped
+  become: true

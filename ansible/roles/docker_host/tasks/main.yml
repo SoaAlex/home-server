@@ -1,0 +1,43 @@
+- name: Read daemon.json
+  ansible.builtin.slurp:
+    src: /etc/docker/daemon.json
+  register: docker_daemon_current
+  failed_when: false
+
+- name: Compare daemon.json with the repo (semantic, formatting ignored)
+  ansible.builtin.set_fact:
+    docker_daemon_differs: >-
+      {{ docker_daemon_current.content is not defined
+         or (docker_daemon_current.content | b64decode | from_json) != docker_daemon_config }}
+
+- name: Count running containers
+  ansible.builtin.command: docker ps -q
+  register: docker_running
+  changed_when: false
+  check_mode: false
+  when: docker_daemon_differs
+
+- name: Refuse to restart Docker under running containers
+  ansible.builtin.fail:
+    msg: >-
+      /etc/docker/daemon.json differs from the repo (found:
+      {{ docker_daemon_current.content | default('') | b64decode | from_json | default('absent') }},
+      expected: {{ docker_daemon_config }}) and {{ docker_running.stdout_lines | length }} containers
+      are running. Applying it restarts Docker and every container: rerun with
+      -e allow_docker_restart=true when that is acceptable.
+  when:
+    - docker_daemon_differs
+    - docker_running.stdout_lines | length > 0
+    - not allow_docker_restart | bool
+
+- name: Write daemon.json
+  ansible.builtin.copy:
+    content: "{{ docker_daemon_config | to_nice_json(indent=2) }}\n"
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  become: true
+  when: docker_daemon_differs
+  notify: Restart docker

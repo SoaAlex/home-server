@@ -1,0 +1,18 @@
+# Converge the NAS to the state described in the repo.
+#   ansible-playbook playbooks/site.yml --check --diff     # report only
+#   ansible-playbook playbooks/site.yml --tags host        # host roles only
+#   ansible-playbook playbooks/site.yml --tags secrets     # one role
+- name: NAS rebuild
+  hosts: nas
+  gather_facts: false
+  roles:
+    - {role: preflight, tags: [always]}
+    - {role: repo, tags: [repo, host]}
+    - {role: docker_host, tags: [docker_host, host]}
+    - {role: network_shim, tags: [network_shim, host]}
+    - {role: ssh, tags: [ssh, host]}
+    - {role: systemd_boot, tags: [systemd_boot, host]}
+    - {role: user_tools, tags: [user_tools, host]}
+    - {role: backup_units, tags: [backup_units, host]}
+    - {role: legacy_cron, tags: [legacy_cron, host]}
+    - {role: secrets, tags: [secrets]}

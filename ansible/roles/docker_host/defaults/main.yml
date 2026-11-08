@@ -1,0 +1,8 @@
+# /etc/docker/daemon.json. Docker root on the NVMe SSD; the containerd image
+# store is off (it would move every image out of data-root).
+docker_daemon_config:
+  data-root: /volume1/@docker
+  features:
+    containerd-snapshotter: false
+# Rewriting daemon.json while containers run requires restarting Docker.
+allow_docker_restart: false

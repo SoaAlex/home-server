@@ -1,0 +1,7 @@
+#!/bin/sh
+# dk '<shell command>' : run a shell command on the host.
+# Host version (terminal.backend=local): the docker CLI is installed natively, so the sandbox's
+# `hermes-dockercli` helper container is no longer needed. Usage unchanged:
+#   dk 'cd /volume1/docker/maison && docker compose ps'
+# Sandbox original: ~/.hermes/sandboxes/docker/default/workspace/bin/dk
+exec sh -c "$*"

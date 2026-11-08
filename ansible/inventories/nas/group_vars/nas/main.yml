@@ -1,0 +1,14 @@
+# Non-secret settings of the NAS. Secrets live in vault.yml (encrypted).
+nas_user: soaalex
+nas_uid: 1000
+nas_gid: 10
+nas_home: /home/soaalex
+nas_repo_dir: /volume1/docker
+nas_repo_url: https://github.com/SoaAlex/home-server
+
+# sudo password, from the vault (entered with scripts/vault-set.py vault_become_password).
+ansible_become_password: "{{ vault_become_password }}"
+
+# Root crontab lines replaced by nas-backup (role legacy_cron, opt-in).
+legacy_cron_lines:
+  - "0 2 * * * sudo cp -r /volume1/docker /volume2/NAS-STORAGE/TechnicalBackups/docker"

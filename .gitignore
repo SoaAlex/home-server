@@ -29,8 +29,9 @@ home-server/code-server/
 # Wireguard peer keys & runtime
 home-server/wireguard/
 
-# Aiostreams app data (not config)
-home-server/aiostreams/
+# Aiostreams app data (not config); keep only the variable template.
+home-server/aiostreams/*
+!home-server/aiostreams/.env.example
 
 # StremThru runtime data (SQLite cache, rebuilt on start)
 home-server/stremthru/
@@ -76,6 +77,16 @@ maison/.scratch/
 # Maison — données personnelles (critères, adresses, annonces réelles)
 maison/config/criteria.yaml
 maison/tests/fixtures/
+
+# Ansible / Terraform: vault password, provider cache, state, variable files
+ansible/.vault-pass*
+ansible/.venv/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+!*.example.tfvars
 
 # OS / Python noise
 .DS_Store

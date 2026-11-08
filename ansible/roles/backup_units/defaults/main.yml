@@ -1,0 +1,3 @@
+backup_units_src: "{{ nas_repo_dir }}/backup/systemd"
+backup_units_dir: "{{ nas_home }}/.config/systemd/user"
+backup_units_timers: [nas-backup.timer, nas-backup-weekly.timer, nas-backup-monthly.timer]

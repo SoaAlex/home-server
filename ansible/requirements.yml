@@ -1,0 +1,9 @@
+# Ansible collections, pinned. Install with:
+#   ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: community.docker
+    version: "5.4.0"
+  - name: community.general
+    version: "14.0.0"
+  - name: ansible.posix
+    version: "2.2.2"

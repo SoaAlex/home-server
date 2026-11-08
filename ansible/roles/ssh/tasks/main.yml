@@ -1,0 +1,51 @@
+# A drop-in, because UGOS rewrites sshd_config. Validated with sshd -t
+# before any reload; restored if invalid.
+- name: Set AllowTcpForwarding local
+  become: true
+  block:
+    - name: Write the sshd drop-in
+      ansible.builtin.copy:
+        content: "AllowTcpForwarding local\n"
+        dest: /etc/ssh/sshd_config.d/00-tcp-forwarding.conf
+        owner: root
+        group: root
+        mode: "0644"
+        backup: true
+      register: ssh_dropin
+
+    - name: Validate the sshd configuration
+      ansible.builtin.command: sshd -t
+      changed_when: false
+      when: ssh_dropin is changed
+
+    - name: Reload sshd
+      ansible.builtin.systemd_service:
+        name: ssh.service
+        state: reloaded
+      when: ssh_dropin is changed
+  rescue:
+    - name: Restore the previous drop-in
+      ansible.builtin.copy:
+        src: "{{ ssh_dropin.backup_file }}"
+        dest: /etc/ssh/sshd_config.d/00-tcp-forwarding.conf
+        remote_src: true
+        mode: "0644"
+      when: ssh_dropin.backup_file is defined
+
+    - name: Remove the new drop-in (there was none before)
+      ansible.builtin.file:
+        path: /etc/ssh/sshd_config.d/00-tcp-forwarding.conf
+        state: absent
+      when: ssh_dropin.backup_file is not defined and ssh_dropin is changed
+
+    - name: Stop, sshd was not reloaded
+      ansible.builtin.fail:
+        msg: "sshd -t rejected the configuration: previous drop-in restored, sshd not reloaded."
+
+- name: Check the effective value
+  ansible.builtin.command: sshd -T
+  become: true
+  register: ssh_effective
+  changed_when: false
+  check_mode: false
+  failed_when: "'allowtcpforwarding local' not in ssh_effective.stdout_lines"

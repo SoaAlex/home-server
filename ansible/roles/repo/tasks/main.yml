@@ -1,0 +1,58 @@
+# Clone the repo only on a NAS without it. An existing clone is never
+# pulled, reset or checked out: it often holds unpushed commits.
+- name: Look for an existing clone
+  ansible.builtin.stat:
+    path: "{{ nas_repo_dir }}/.git"
+  register: repo_git
+
+- name: Create the repo directory
+  ansible.builtin.file:
+    path: "{{ nas_repo_dir }}"
+    state: directory
+    owner: "{{ nas_user }}"
+    group: "{{ nas_gid }}"
+    mode: "0755"
+  become: true
+
+- name: Clone the repo (fresh NAS only)
+  ansible.builtin.git:
+    repo: "{{ nas_repo_url }}"
+    dest: "{{ nas_repo_dir }}"
+    version: master
+    update: false
+  when: not repo_git.stat.exists
+
+- name: Read the state of the existing clone
+  ansible.builtin.command: git -C {{ nas_repo_dir }} status --porcelain=v2 --branch
+  register: repo_status
+  changed_when: false
+  check_mode: false
+  when: repo_git.stat.exists
+
+- name: Report the clone state (never changed by Ansible)
+  ansible.builtin.debug:
+    msg: >-
+      {{ nas_repo_dir }}: branch
+      {{ repo_status.stdout | regex_findall('# branch.head ([^ ]+)') | first | default('?') }},
+      {{ repo_status.stdout | regex_findall('# branch.ab (.+)') | first | default('no upstream') }},
+      {{ repo_status.stdout_lines | reject('match', '[#?]') | list | length }} modified,
+      {{ repo_status.stdout_lines | select('match', '[?]') | list | length }} untracked
+  when: repo_git.stat.exists
+
+- name: List code paths writable by group or others
+  ansible.builtin.shell: |
+    cd {{ nas_repo_dir }} || exit 0
+    { git ls-files -z
+      git ls-files | xargs -d '\n' -n1 dirname | sort -u | grep -vx '\.' | tr '\n' '\0'
+      for p in {{ repo_code_paths | join(' ') }}; do [ -e "$p" ] && find "$p" -print0; done
+    } | xargs -0 -r find 2>/dev/null -maxdepth 0 -user {{ nas_user }} -perm /022 -print
+    true
+  register: repo_writable
+  changed_when: false
+  check_mode: false
+
+- name: Remove group/other write on code paths
+  ansible.builtin.file:
+    path: "{{ nas_repo_dir }}/{{ item }}"
+    mode: go-w
+  loop: "{{ repo_writable.stdout_lines }}"

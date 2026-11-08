@@ -1,0 +1,3 @@
+# Paths whose files must be writable by the owner only (root and nas_user).
+# Data directories are left alone: containers with other uids write there.
+repo_code_paths: [.git, ansible, openspec]

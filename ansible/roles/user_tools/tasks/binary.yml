@@ -1,0 +1,69 @@
+# One pinned tool. get_url checks the SHA-256 before anything is extracted:
+# a wrong sum fails here and the installed binary is left untouched.
+- name: Create the download directory
+  ansible.builtin.file:
+    path: "{{ user_tools_download_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: "Download {{ tool.name }} {{ tool.version }}"
+  block:
+    - name: "Download {{ tool.name }} from the release page"
+      ansible.builtin.get_url:
+        url: "{{ tool.url }}"
+        dest: "{{ user_tools_download_dir }}/{{ tool.url | basename }}"
+        checksum: "sha256:{{ tool.sha256 }}"
+        mode: "0644"
+      register: user_tools_archive
+  rescue:
+    - name: Stop on a checksum mismatch (no fallback for a wrong file)
+      ansible.builtin.fail:
+        msg: "{{ tool.name }}: {{ ansible_failed_result.msg }}. Installed binary left untouched."
+      when: "'checksum' in (ansible_failed_result.msg | default('') | lower)"
+
+    - name: "Download {{ tool.name }} through the GitHub API"
+      ansible.builtin.get_url:
+        url: "{{ tool.api_url }}"
+        headers:
+          Accept: application/octet-stream
+        dest: "{{ user_tools_download_dir }}/{{ tool.url | basename }}"
+        checksum: "sha256:{{ tool.sha256 }}"
+        mode: "0644"
+      register: user_tools_archive
+
+- name: "Extract {{ tool.name }}"
+  when: not ansible_check_mode
+  block:
+    - name: Prepare the extraction directory
+      ansible.builtin.file:
+        path: "{{ user_tools_download_dir }}/{{ tool.name }}-{{ tool.version }}"
+        state: directory
+        mode: "0755"
+
+    - name: Decompress (bz2)
+      community.general.decompress:
+        src: "{{ user_tools_archive.dest }}"
+        dest: "{{ user_tools_download_dir }}/{{ tool.name }}-{{ tool.version }}/{{ tool.files | first }}"
+        format: bz2
+      when: tool.format == 'bz2'
+
+    # Python's own zipfile/tarfile: the NAS has neither unzip nor bunzip2.
+    - name: Extract (zip / tar)
+      ansible.builtin.command: >-
+        /usr/bin/python3 -I -m {{ 'zipfile' if tool.format == 'zip' else 'tarfile' }} -e
+        {{ user_tools_archive.dest }} {{ user_tools_download_dir }}/{{ tool.name }}-{{ tool.version }}
+      changed_when: true
+      when: tool.format in ['zip', 'tar']
+
+    - name: Install the binaries
+      ansible.builtin.copy:
+        src: "{{ user_tools_download_dir }}/{{ tool.name }}-{{ tool.version }}/{{ item.key }}"
+        dest: "{{ user_tools_bin_dir }}/{{ item.value }}"
+        remote_src: true
+        mode: "0755"
+      loop: "{{ tool.files | dict2items }}"
+
+    - name: Remove the extraction directory
+      ansible.builtin.file:
+        path: "{{ user_tools_download_dir }}/{{ tool.name }}-{{ tool.version }}"
+        state: absent

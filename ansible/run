@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Run Ansible (or Terraform) from a container on the NAS itself, with nothing
+# installed on the host. The container reaches the host over SSH on 127.0.0.1
+# with a dedicated key, so the playbooks configure the HOST, not the container.
+#
+#   ansible/run ansible nas -m ping
+#   ansible/run ansible-playbook playbooks/site.yml --check --diff
+#   ansible/run --build            # rebuild the image only
+#
+# One-time setup: see ansible/README.md (key ~/.ssh/nas_ansible, restricted to
+# from="127.0.0.1,::1" in ~/.ssh/authorized_keys).
+set -euo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+repo=$(cd "$here/.." && pwd)
+key=${NAS_ANSIBLE_KEY:-$HOME/.ssh/nas_ansible}
+vault_pass=${NAS_ANSIBLE_VAULT_PASS:-$HOME/.config/nas-ansible/vault-pass}
+state_dir=$HOME/.config/nas-ansible
+
+# Image tag = hash of what goes into it: any change rebuilds it.
+tag=$(cat "$here/Dockerfile" "$here/requirements.txt" "$here/requirements.yml" | sha256sum | cut -c1-12)
+image="nas-ansible:$tag"
+
+if [[ "${1:-}" == "--build" ]] || ! docker image inspect "$image" >/dev/null 2>&1; then
+  docker build -q -t "$image" "$here" >/dev/null
+  [[ "${1:-}" == "--build" ]] && { echo "$image"; exit 0; }
+fi
+
+if [[ ! -f "$key" ]]; then
+  echo "run: SSH key $key is missing (see ansible/README.md, « Control container »)." >&2
+  exit 2
+fi
+
+# known_hosts from the host keys themselves: no trust-on-first-use.
+mkdir -p "$state_dir" && chmod 700 "$state_dir"
+known="$state_dir/known_hosts"
+: > "$known"
+for pub in /etc/ssh/ssh_host_*_key.pub; do
+  printf '127.0.0.1 %s\n' "$(cut -d' ' -f1,2 "$pub")" >> "$known"
+done
+
+args=(--rm --network host --init
+  -v "$repo:$repo" -w "$here"
+  -v "$key:/home/ansible/.ssh/id:ro"
+  -v "$known:/home/ansible/.ssh/known_hosts:ro"
+  -e NAS_ANSIBLE_HOST=127.0.0.1
+  # UGOS ACLs make /volume1 folders world-writable: Ansible then ignores a
+  # ./ansible.cfg unless it is named explicitly.
+  -e ANSIBLE_CONFIG="$here/ansible.cfg"
+  -e ANSIBLE_PRIVATE_KEY_FILE=/home/ansible/.ssh/id)
+# Controller-side files the playbooks may read (age identity for hermes-vault):
+# pass their directory explicitly with NAS_ANSIBLE_EXTRA_MOUNT=/path (read-only).
+if [[ -n "${NAS_ANSIBLE_EXTRA_MOUNT:-}" ]]; then
+  args+=(-v "$NAS_ANSIBLE_EXTRA_MOUNT:$NAS_ANSIBLE_EXTRA_MOUNT:ro")
+fi
+if [[ -f "$vault_pass" ]]; then
+  args+=(-v "$vault_pass:/home/ansible/.vault-pass:ro" -e ANSIBLE_VAULT_PASSWORD_FILE=/home/ansible/.vault-pass)
+fi
+if [[ -t 0 && -t 1 ]]; then args+=(-it); elif [[ ! -t 0 ]]; then args+=(-i); fi
+
+exec docker run "${args[@]}" "$image" "$@"

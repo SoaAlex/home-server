@@ -1,0 +1,4 @@
+# Root crontab lines replaced by nas-backup. Removed only with
+# -e cleanup_legacy_cron=true (after a green week of restic).
+cleanup_legacy_cron: false
+legacy_cron_crontab: /var/spool/cron/crontabs/root

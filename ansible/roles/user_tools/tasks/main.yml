@@ -1,0 +1,44 @@
+- name: Create the bin directory
+  ansible.builtin.file:
+    path: "{{ user_tools_bin_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Install wrappers from the NAS clone
+  ansible.builtin.copy:
+    src: "{{ nas_repo_dir }}/{{ item.value }}"
+    dest: "{{ user_tools_bin_dir }}/{{ item.key }}"
+    remote_src: true
+    mode: "0755"
+  loop: "{{ user_tools_wrappers | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: user_tools_wrappers_copied
+
+- name: Show what would change
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: show_diff
+  vars:
+    show_diff_results: "{{ user_tools_wrappers_copied.results }}"
+
+- name: Read installed tool versions
+  ansible.builtin.shell: "{{ user_tools_bin_dir }}/{{ item.version_cmd }} 2>/dev/null | head -1"
+  loop: "{{ user_tools_binaries }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: user_tools_versions
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Install tools whose version differs
+  ansible.builtin.include_tasks: binary.yml
+  loop: "{{ user_tools_binaries }}"
+  loop_control:
+    loop_var: tool
+    index_var: tool_index
+    label: "{{ tool.name }}"
+  when: >-
+    (user_tools_versions.results[tool_index].stdout | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true))
+    != tool.version

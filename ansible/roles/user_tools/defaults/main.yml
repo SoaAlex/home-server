@@ -1,0 +1,39 @@
+user_tools_bin_dir: "{{ nas_home }}/.local/bin"
+user_tools_download_dir: "{{ nas_home }}/.cache/nas-ansible/downloads"
+# Wrappers used by jobs and skills: ~/.local/bin name -> source in the repo.
+user_tools_wrappers:
+  nas-backup: backup/nas-backup
+  nas-boot-check: boot-check/nas-boot-check
+  maison: maison/scripts/maison_cli.py
+  eurl-frais: eurl-frais/scripts/eurl-frais
+  mrun: maison/scripts/mrun
+  dk: ansible/files/dk
+# Pinned tools; sha256 = GitHub release asset digest (checked again by get_url).
+user_tools_binaries:
+  - name: restic
+    # Same file through the GitHub API (used when github.com answers 5xx).
+    api_url: https://api.github.com/repos/restic/restic/releases/assets/466999719
+    version: 0.19.1
+    version_cmd: restic version
+    url: https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_linux_amd64.bz2
+    sha256: f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c
+    format: bz2
+    files: {restic_0.19.1_linux_amd64: restic}
+  - name: rclone
+    # Same file through the GitHub API (used when github.com answers 5xx).
+    api_url: https://api.github.com/repos/rclone/rclone/releases/assets/624695998
+    version: 1.75.2
+    version_cmd: rclone version
+    url: https://github.com/rclone/rclone/releases/download/v1.75.2/rclone-v1.75.2-linux-amd64.zip
+    sha256: 349ac8fba6ff65d6247043f1750cdcb518ec5d500ef91463a10d37c0ccdf3702
+    format: zip
+    files: {rclone-v1.75.2-linux-amd64/rclone: rclone}
+  - name: age
+    # Same file through the GitHub API (used when github.com answers 5xx).
+    api_url: https://api.github.com/repos/FiloSottile/age/releases/assets/535541903
+    version: 1.3.2
+    version_cmd: age --version
+    url: https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz
+    sha256: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
+    format: tar
+    files: {age/age: age, age/age-keygen: age-keygen}

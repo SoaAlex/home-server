@@ -1,0 +1,56 @@
+# Host-side macvlan interface so the NAS reaches Pi-hole (macvlan containers
+# are unreachable from their own host otherwise). Copied from the NAS clone.
+- name: Install the shim script
+  ansible.builtin.copy:
+    src: "{{ network_shim_src }}/macvlan-shim.sh"
+    dest: /usr/local/bin/macvlan-shim.sh
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+    backup: true
+  become: true
+  register: network_shim_script
+
+- name: Install the shim unit
+  ansible.builtin.copy:
+    src: "{{ network_shim_src }}/macvlan-shim.service"
+    dest: /etc/systemd/system/macvlan-shim.service
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+    backup: true
+  become: true
+  register: network_shim_unit
+
+- name: Show what would change
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: show_diff
+  vars:
+    show_diff_results: "{{ [network_shim_script, network_shim_unit] }}"
+
+- name: Enable the shim at boot (started if not running)
+  ansible.builtin.systemd_service:
+    name: macvlan-shim.service
+    enabled: true
+    state: started
+    daemon_reload: "{{ network_shim_unit is changed }}"
+  become: true
+
+- name: Say a changed shim waits for the next boot
+  ansible.builtin.debug:
+    msg: >-
+      The shim changed but was not restarted (that would cut the route to Pi-hole for a moment).
+      It applies at the next boot, or now with: sudo systemctl restart macvlan-shim
+  when: network_shim_script is changed or network_shim_unit is changed
+
+- name: Check the route to Pi-hole goes through the shim
+  ansible.builtin.command: ip route get {{ network_shim_target }}
+  register: network_shim_route
+  changed_when: false
+  check_mode: false
+  failed_when: >-
+    ('dev ' ~ network_shim_iface) not in network_shim_route.stdout
+    or ('src ' ~ network_shim_ip) not in network_shim_route.stdout

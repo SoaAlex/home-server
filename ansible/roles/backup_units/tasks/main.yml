@@ -1,0 +1,40 @@
+- name: List the backup units of the repo
+  ansible.builtin.find:
+    paths: "{{ backup_units_src }}"
+    patterns: ["*.service", "*.timer"]
+  register: backup_units_files
+
+- name: Create the user unit directory
+  ansible.builtin.file:
+    path: "{{ backup_units_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Install the units (repo content, unchanged)
+  ansible.builtin.copy:
+    src: "{{ item.path }}"
+    dest: "{{ backup_units_dir }}/{{ item.path | basename }}"
+    remote_src: true
+    mode: "0644"
+  loop: "{{ backup_units_files.files | sort(attribute='path') }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  register: backup_units_copied
+
+- name: Show what would change
+  ansible.builtin.include_role:
+    name: common
+    tasks_from: show_diff
+  vars:
+    show_diff_results: "{{ backup_units_copied.results }}"
+
+- name: Enable and start the timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    scope: user
+    enabled: true
+    state: started
+    daemon_reload: "{{ backup_units_copied is changed }}"
+  environment:
+    XDG_RUNTIME_DIR: /run/user/{{ nas_uid }}
+  loop: "{{ backup_units_timers }}"

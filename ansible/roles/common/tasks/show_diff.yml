@@ -1,0 +1,23 @@
+# In --check, print `diff -u` for files a remote_src copy would change
+# (copy shows no diff for remote sources). Not for secrets: never used on .env.
+#   vars: show_diff_results = list of copy results (a register, or its .results)
+- name: Diff of files that would change
+  ansible.builtin.command:
+    argv: [diff, -u, --label, "{{ item.dest }} (NAS)", --label, "{{ item.src }} (repo)", "{{ item.dest }}", "{{ item.src }}"]
+  loop: "{{ show_diff_results | selectattr('changed') | selectattr('src', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.dest }}"
+  register: show_diff_out
+  changed_when: false
+  failed_when: show_diff_out.rc > 1 and 'No such file' not in show_diff_out.stderr
+  check_mode: false
+  become: "{{ show_diff_become | default(false) }}"
+  when: ansible_check_mode
+
+- name: Show the diffs
+  ansible.builtin.debug:
+    msg: "{{ (item.stdout or item.stderr) | split('\n') }}"
+  loop: "{{ show_diff_out.results | default([]) | selectattr('stdout', 'defined') | list }}"
+  loop_control:
+    label: "{{ item.item.dest }}"
+  when: ansible_check_mode

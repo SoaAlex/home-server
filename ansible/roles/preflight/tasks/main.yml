@@ -1,0 +1,66 @@
+# Read-only checks before anything is changed. Docker and Compose come with
+# the UGOS Docker app: they are checked, never installed.
+- name: Read Docker and Compose versions
+  ansible.builtin.shell: |
+    set -e
+    command -v docker >/dev/null || { echo missing; exit 0; }
+    docker version --format '{{ '{{' }}.Server.Version{{ '}}' }}'
+    docker compose version --short
+  register: preflight_versions
+  changed_when: false
+  check_mode: false
+
+- name: Require Docker and Compose from the UGOS Docker app
+  ansible.builtin.assert:
+    that:
+      - preflight_versions.stdout_lines[0] != 'missing'
+      - preflight_versions.stdout_lines | length == 2
+      - preflight_versions.stdout_lines[0] is version(preflight_docker_min, '>=')
+      - preflight_versions.stdout_lines[1] | regex_replace('^v', '') is version(preflight_compose_min, '>=')
+    fail_msg: >-
+      Docker >= {{ preflight_docker_min }} with Compose >= {{ preflight_compose_min }} is required
+      (found: {{ preflight_versions.stdout_lines | join(', ') }}). Install the Docker app from the
+      UGOS App Center; Ansible does not install Docker.
+    success_msg: "Docker {{ preflight_versions.stdout_lines | join(' / Compose ') }}"
+
+- name: Check the volumes are mounted
+  ansible.builtin.command: mountpoint -q {{ item }}
+  loop: "{{ preflight_mounts }}"
+  register: preflight_mountpoints
+  changed_when: false
+  failed_when: preflight_mountpoints.rc != 0
+  check_mode: false
+
+- name: Require an unlocked vault
+  ansible.builtin.assert:
+    that: vault_env_files is defined
+    fail_msg: >-
+      Secrets not loaded: pass --ask-vault-pass, or set ANSIBLE_VAULT_PASSWORD_FILE
+      (ansible/run mounts ~/.config/nas-ansible/vault-pass).
+    quiet: true
+
+- name: Read the commit of the NAS clone
+  ansible.builtin.command: git -C {{ nas_repo_dir }} rev-parse HEAD
+  register: preflight_nas_commit
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Read the commit of the controller clone
+  ansible.builtin.command: git -C {{ preflight_controller_repo }} rev-parse HEAD
+  register: preflight_ctl_commit
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Warn when the controller runs playbooks from another commit
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: playbooks come from commit {{ preflight_ctl_commit.stdout[:12] | default('?') }}
+      but the NAS clone is at {{ preflight_nas_commit.stdout[:12] | default('none') }}. Host files
+      are copied from the NAS clone; update the controller clone if the playbooks are stale.
+  when:
+    - preflight_nas_commit.rc == 0
+    - preflight_ctl_commit.stdout | default('') != preflight_nas_commit.stdout

@@ -1,0 +1,4 @@
+galaxy_info:
+  description: Shared task files (no tasks/main.yml).
+  min_ansible_version: "2.20"
+dependencies: []

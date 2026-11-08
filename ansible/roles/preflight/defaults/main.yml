@@ -1,0 +1,5 @@
+preflight_docker_min: "24.0"
+preflight_compose_min: "2.20"
+preflight_mounts: [/volume1, /volume2, /home]
+# Clone the playbooks run from (the controller). Overridable to test the warning.
+preflight_controller_repo: "{{ playbook_dir | dirname | dirname }}"

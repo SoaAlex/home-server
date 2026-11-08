@@ -1,0 +1,9 @@
+- name: Remove legacy root cron lines
+  ansible.builtin.lineinfile:
+    path: "{{ legacy_cron_crontab }}"
+    line: "{{ item }}"
+    state: absent
+    backup: true
+  loop: "{{ legacy_cron_lines }}"
+  become: true
+  when: cleanup_legacy_cron | bool

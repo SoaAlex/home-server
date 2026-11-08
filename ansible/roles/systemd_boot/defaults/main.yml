@@ -1,0 +1,1 @@
+systemd_boot_src: "{{ nas_repo_dir }}/boot-check/systemd"

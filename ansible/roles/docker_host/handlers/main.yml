@@ -1,0 +1,7 @@
+# dockerd runs under docker.service (socket-activated); docker_serv is the
+# UGOS app manager and is left alone (design D6).
+- name: Restart docker
+  ansible.builtin.systemd_service:
+    name: docker.service
+    state: restarted
+  become: true
