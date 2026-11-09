@@ -19,7 +19,10 @@ the message, whatever it contains.
 Below the scissors line git drops everything with -v, commit.verbose or --cleanup=scissors, and keeps it
 without them (the hook cannot tell which). So what is below is scanned too, except the lines that belong to
 a diff: those hold the staged files, which the other hooks scan, and the lines of a change that REMOVES a
-secret, which must not stop the commit. Text typed under the diff header is not diff-shaped and is scanned.
+secret, which must not stop the commit. A diff line is one that starts with a space, +, - or a backslash, or with
+a word of a diff header: diff --git, index, @@, new/deleted file mode, old/new mode, similarity/dissimilarity index,
+rename from/to, copy from/to, Binary files, GIT binary patch. Text typed under the diff header is scanned, unless it
+starts like one of those lines.
 
 The subject check ignores comment lines when an editor ran, as git does by default. With -m or -F the
 message is kept as written, so "#123 fix login" really is a subject that is not a Conventional Commit.
