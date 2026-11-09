@@ -238,7 +238,8 @@ any of these checks fails:
   removed, a value as docker compose writes it (every `$` doubled), as a URL
   writes it (percent-encoded), as a JSON or YAML string writes it (escaped), as
   a shell script writes it (in double or single quotes) and as XML writes it
-  (entities), the secret part of a URL (the token of a webhook, of a private
+  (entities), also two of these at once (compose's `$$` inside a YAML string),
+  the secret part of a URL (the token of a webhook, of a private
   calendar feed, or of a health-check ping), and ntfy topics. A path segment or
   query value of a URL that looks random (16 characters or more, a hash or a
   UUID) counts as a secret whatever the variable is called, so a file that
@@ -263,10 +264,13 @@ any of these checks fails:
   has 40,000 spaces and a newline in front, where no mark can be found, and
   UTF-16 and UTF-32 text becomes UTF-8. The copy is `_scan/<id>/<name>` when
   gitleaks reads that name, because some rules depend on it (a Kubernetes Secret
-  in a `.yaml` file, a password in a `.tf` file). A file that has several names
-  gets one copy for each name (at most six, then one for each extension). The
-  copy is `_scan/<id>.txt` when gitleaks reads none of the names, and
-  `_scan/deps/<id>.txt` for a lock file. The `<id>` comes from the content, so
+  in a `.yaml` file, a password in a `.tf` file or in a `nuget.config`). Those
+  rules look at the end of the name, so a name of more than 100 bytes keeps its
+  last 100. A file that has several names gets one copy for each different name,
+  up to 64; the hook refuses a file with more names, because it cannot ask
+  gitleaks about each of them. The copy is `_scan/<id>.txt` when gitleaks reads
+  none of the names, and `_scan/deps/<id>.txt` for a lock file. The `<id>` comes
+  from the content, so
   that the fingerprint gitleaks prints for a finding in a copy stays valid for
   that content only. When gitleaks finds something in a copy, the hook lists the
   file that each copy stands for; a line number in a copy is one more than in
@@ -278,9 +282,10 @@ any of these checks fails:
   too, for example a cache called after a URL. The hook looks for the `.env`
   values in each path, and gives gitleaks each path as a small file called
   `_scan/names/<id>.txt`, where `<id>` comes from the path. A finding there is in
-  the name of a file of the change, and the hook does not print the name. It
-  does not check the names of the files that a commit deletes, nor the old names
-  of renamed files: removing them is the fix. A program or a library is scanned as text like the rest, so it is
+  the name of a file of the change (a submodule included), and only the
+  fingerprint can accept it, because `gitleaks:allow` cannot be written in a
+  name. The hook does not check the names of the files that a commit deletes,
+  nor the old names of renamed files: removing them is the fix. A program or a library is scanned as text like the rest, so it is
   refused when it embeds a string that looks like a key (some libraries do, and
   so does the `gitleaks` program): accept it by adding the fingerprint that
   gitleaks prints to `.gitleaksignore`, because `gitleaks:allow` cannot be
@@ -297,13 +302,20 @@ any of these checks fails:
 - An Ansible Vault file is not encrypted.
 
 The hooks need `python3` and `gitleaks` (tested with 8.30.1), and refuse the
-commit when either is missing. The hook never prints a secret, only the file, the line, and the rule.
-The one exception is a secret in the name of a file: the name check does not print it, but gitleaks prints
-the name of a file that it also refuses for its content.
+commit when either is missing. The hooks print paths, line numbers, variable
+names, and rules, never a value. A path can hold a secret too, so in the paths
+that the hooks print they replace the value of a `.env` variable with `<secret>`
+and any run of 20 or more letters, digits, and underscores that has both letters
+and digits, a token whatever its kind, with `<hidden>`. The exception is
+gitleaks: it prints the name of a file that it flags or cannot read, and the
+fingerprint of the finding, so a secret in the name of a file that gitleaks also
+refuses for its content is shown. The list of copies gives the start of the object id of each
+file (`git ls-files -s | grep <id>` finds it).
 All checks run before the commit is refused, so one attempt lists every
 problem. If a finding is a false positive, add a `gitleaks:allow` comment on
 the line. Both checks honor it. For gitleaks, you can also add the fingerprint
-that it prints to `.gitleaksignore` with a comment that explains why. Skip the
+that it prints to `.gitleaksignore` with a comment that explains why. A finding
+in the name of a file can only be accepted that way. Skip the
 hooks with `git commit --no-verify` only after you have checked the change by
 hand, because this repository is public.
 
@@ -319,7 +331,11 @@ The hooks lower the risk; they do not remove it. These gaps are known:
 - gitleaks ignores a secret that contains `false`, starts with `true`, or ends
   with `null`, in any case, because of an exception in its default
   configuration. A password such as `NotFalse2024` in a URL is not found. The
-  `.env` values are not affected.
+  `.env` values are not affected. Its rules have other exceptions for what they
+  take for a placeholder: a secret that is entirely a variable reference
+  (`$NAME`, `${NAME}`, `{{ name }}`, `%NAME%`), one repeated letter, or a path
+  such as `/home/...` is ignored, and the generic rule also ignores a value made
+  only of letters, `_`, `.` and `-`, or one that contains a common word.
 - A file over 64 MB is not given to gitleaks; the hook says so. The `.env` values
   are still looked for in it, at any size.
 - gitleaks reads a line of more than about 125 KB without a line break in
@@ -327,9 +343,10 @@ The hooks lower the risk; they do not remove it. These gaps are known:
   such a file with spaces in front, so that a piece which starts with a mark
   cannot hide the rest of the file, but the straddling risk stays.
 - The `.env` values are looked for as they are written and in the spellings
-  above. A value written as base64 or hexadecimal, reversed, cut in pieces, or
-  escaped as another language does (Python `repr`, a regular expression) is not
-  found.
+  above, one or two at a time. A value written as base64 or hexadecimal,
+  reversed, cut in pieces, escaped three times, or escaped as another language
+  does (Python `repr`, a regular expression, CSV, `encodeURIComponent`, XML
+  numeric entities, `&apos;`) is not found.
 - The hooks copy the staged files into `$TMPDIR`: about twice the size of the
   change, plus another copy of each file that gitleaks skips. A commit of 3,000
   text files of 34 KB (99 MB) took about 30 seconds and 200 MB of `$TMPDIR`.
@@ -352,6 +369,9 @@ The hooks lower the risk; they do not remove it. These gaps are known:
   delete and recreate a remote, run `git fetch --prune` or delete the stale
   branches (`git branch -dr origin/<name>`) before the first push.
 - `git commit --no-verify` and `git push --no-verify` skip the hooks.
+- A clone or a linked worktree whose checked-out commit has no `.githooks/`
+  directory (an old branch) runs no hook at all, because `core.hooksPath` is
+  relative. Turn the hooks on again after you check out a commit that has them.
 
 To scan everything that is already committed, run:
 
@@ -413,7 +433,8 @@ chore!: drop the Minecraft stack
 The `pre-push` hook runs the secret checks again on the commits that a push
 would send. Merges, rebases, cherry-picks, `git am`, and
 `git commit --no-verify` skip the commit hooks, so this hook is the last gate
-before commits become public. It checks the file names, the `.env` values, the
+before commits become public. It checks the file names (the paths of
+submodules too), the `.env` values, the
 commit and tag messages (a tag of a tag too, up to 20 levels), the names and
 addresses of the authors and committers, the names of the branch or tag, and the
 Ansible Vault files. It also scans, with
