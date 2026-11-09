@@ -236,23 +236,37 @@ any of these checks fails:
   files of any size, in UTF-8, UTF-16, or UTF-32. It also knows the values in
   `.env` backups and in commented-out assignments, a value with its spaces
   removed, the secret part of a URL (the token of a webhook, of a private
-  calendar feed, or of a health-check ping), and ntfy topics.
+  calendar feed, or of a health-check ping), and ntfy topics. A path segment or
+  query value of a URL that looks random (16 characters or more, a hash or a
+  UUID) counts as a secret whatever the variable is called, so a file that
+  merely mentions the same hash is refused too: put `gitleaks:allow` on that
+  line to accept it. A topic with a slash (an MQTT topic) is not a secret.
 - [gitleaks](https://github.com/gitleaks/gitleaks) finds a secret in a staged
   file. The hook gives gitleaks copies of the staged files, not the output of
   `git diff --staged`, which a git setting such as `color.ui=always` can leave
   empty without any error. gitleaks scans a file whole, not only its changed
-  lines. It skips some files by name without saying so: lock files, images,
+  lines. It skips some files without saying so, by name (lock files, images,
   fonts, Office documents, `node_modules` and `vendor` directories, and every
-  path that contains `gitleaks.toml`. The hook asks gitleaks which names it
-  skips, and scans a second copy of each file with such a name, as
-  `_scan/<n>.txt`, and a UTF-8 copy of UTF-16 and UTF-32 text. When gitleaks
-  finds something in a copy, the hook lists the file that each copy stands for.
-  gitleaks also opens `.zip`, `.tar`, `.gz`, `.bz2`, and `.xz` files. Neither
-  check looks inside other compressed files, such as `.tgz` or Office
-  documents, and gitleaks skips a file that starts with the signature of an
-  archive or of a PDF, whatever its name. The file `.gitleaks.toml` extends the
+  path that contains `gitleaks.toml`) and by what the file begins with (SQLite
+  databases, executables, archives, PDFs, Office documents, and even a text file
+  that starts with `MZ`). The hook asks gitleaks what it skips: it gives it a
+  test token in a file of each name and of each distinct start of a text file,
+  and sees which ones gitleaks reports. It then scans a second copy, with a
+  newline in front, of each file that gitleaks would not read, and of each file
+  that does not look like text. UTF-16 and UTF-32 text gets a UTF-8 copy. The
+  copy is `_scan/<id>.txt` (`_scan/deps/<id>.txt` for a lock file), named after
+  the content, so that the fingerprint gitleaks prints for a finding in it stays
+  valid for that content only. When gitleaks finds something in a copy, the hook
+  lists the file that each copy stands for; a line number in a copy is one more
+  than in the file. If gitleaks does not report the test token, because it is a
+  stub or a wrapper that cannot see the files, the hook refuses the commit
+  rather than trust it. gitleaks also opens `.zip`, `.tar`, `.gz`, `.bz2`, and
+  `.xz` files, down to three levels. The file `.gitleaks.toml` extends the
   built-in rules with Discord webhooks, WireGuard keys, URLs that embed a
   password, and password hashes, also as docker compose writes them, with `$$`.
+  It switches off the one rule that flags hashes (`generic-api-key`) in lock
+  files such as `go.sum` and `Podfile.lock`; a token with a shape of its own is
+  still found in them.
 - An Ansible Vault file is not encrypted.
 
 The hooks need `python3` and `gitleaks` (tested with 8.30.1), and refuse the
@@ -263,6 +277,32 @@ the line. Both checks honor it. For gitleaks, you can also add the fingerprint
 that it prints to `.gitleaksignore` with a comment that explains why. Skip the
 hooks with `git commit --no-verify` only after you have checked the change by
 hand, because this repository is public.
+
+### What the hooks cannot see
+
+The hooks lower the risk; they do not remove it. These gaps are known:
+
+- A secret with no shape of its own that is neither in an `.env` file nor in a
+  URL of one: only the rules of gitleaks and the `.env` values are known.
+- A secret inside a compressed file other than `.zip`, `.tar`, `.gz`, `.bz2`, or
+  `.xz`: a `.tgz`, an Office document, a `7z` or a `rar`. A file inside an
+  archive nested more than three levels deep is skipped, with a warning.
+- A file over 64 MB is not given to gitleaks; the hook says so. The `.env` values
+  are still looked for in it, at any size.
+- gitleaks reads a line of more than about 125 KB without a line break in
+  pieces, and can miss a secret that straddles a cut.
+- UTF-16 or UTF-32 text without a byte order mark is recognized only when it is
+  mostly ASCII.
+- An `.env` value, or a URL password, of fewer than eight characters is not
+  tracked.
+- Text typed into a commit message below a line that looks like the diff of
+  `git commit -v` is scanned, except for lines that start like a diff line (a
+  space, `+`, `-`, or `\`).
+- A push of a new branch does not check again the commits that a stale
+  remote-tracking branch reaches, because they were public before. After you
+  delete and recreate a remote, run `git fetch --prune` or delete the stale
+  branches (`git branch -dr origin/<name>`) before the first push.
+- `git commit --no-verify` and `git push --no-verify` skip the hooks.
 
 To scan everything that is already committed, run:
 
