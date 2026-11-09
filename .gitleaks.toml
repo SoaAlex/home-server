@@ -20,7 +20,7 @@ useDefault = true
 [[allowlists]]
 description = "hashes in dependency lock files and in their copies"
 paths = [
-  '''^_scan_*/deps/''',
+  '''^_scan_*/deps/[0-9a-f]{12}\.txt$''',
   '''(?i)(?:^|/)(?:package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lock|deno\.lock|cargo\.lock|gemfile\.lock|podfile\.lock|composer\.lock|poetry\.lock|pipfile\.lock|pdm\.lock|uv\.lock|flake\.lock|mix\.lock|pubspec\.lock|conan\.lock|renv\.lock|paket\.lock|berksfile\.lock|packages\.lock\.json|package\.resolved|cartfile\.resolved|go\.sum|go\.work\.sum|verification-metadata\.xml|\.terraform\.lock\.hcl)$''',
   '''(?i)\.lockfile$''',
 ]

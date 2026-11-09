@@ -35,13 +35,15 @@ files, images, vendored directories, anything called gitleaks.toml...), by what 
 a fixed place (SQLite databases, executables, archives, PDFs, Office documents, a text file that starts with
 "MZ" or has "ustar" at byte 257...), when the first line is over 100 KB, and it cannot read UTF-16. Such a file is
 copied a second time, with 40 000 spaces and a newline in front, as DIR/files/_scan/<blob id>/<name> (the name
-kept when gitleaks reads it, for the rules that depend on it; one copy for each name of the file, at most six),
+kept when gitleaks reads it, for the rules that depend on it; one copy for each different name of the file, at most 64:
+a file with more names is refused),
 _scan/<blob id>.txt or _scan/deps/<blob id>.txt (a lock file), in UTF-8, and DIR/MAP says which file each copy is.
 The path of every file the change adds or modifies is also a file, DIR/files/_scan/names/<id>.txt, because a path can
 hold a secret. What gitleaks skips is found by asking it (see
 Export): if it cannot answer, or does not report a token it is given, this exits 2.
 
-It prints paths, line numbers and variable names, never a value. Write `gitleaks:allow` (or
+It prints paths, line numbers and variable names, never a value; in a path it hides the value of a .env variable
+(<secret>) and any run of 20 letters, digits and underscores that has both letters and digits (<hidden>). Write `gitleaks:allow` (or
 `secret-guard:allow`) on a line to accept a value that is meant to be there; files over 32 MB are
 read in chunks and do not honor it. Files over 64 MB are not copied for gitleaks (announced). Run it with `python3 -I`.
 Exit status: 0 clean, 1 something found, 2 the check itself failed (treat it as a failure).
@@ -78,7 +80,7 @@ CHUNK_BYTES = limit("SECRET_GUARD_CHUNK_BYTES", 8 * 1024 * 1024)
 EXPORT_MAX_BYTES = limit("SECRET_GUARD_EXPORT_MAX_BYTES", 64 * 1024 * 1024)
 # What the probe puts in a file to see whether gitleaks reads it: a line shaped like a GitHub token, written in
 # pieces so that no scan of this very file flags it.
-PROBE_TOKEN = "ghp_" + "Q7xK2mV9bR4t" + "Y8nL3cW6dF1hJ5sZ0pAe2uGv"
+PROBE_TOKEN = "".join(("ghp_", "Q7xK2mV9bR4t", "Y8nL3cW6dF1hJ5sZ0pAe2uGv"))  # join: the compiler does not fold it
 PROBE_LINE = ("token = " + PROBE_TOKEN + "\n").encode()
 TWIN_DIR = "_scan"
 # gitleaks takes a file for a format it skips from the first bytes it reads: marks at byte 0 and, for a few formats, at a
@@ -88,9 +90,11 @@ TWIN_DIR = "_scan"
 HEAD_BYTES = 33 * 1024
 LONG_LINE = 100 * 1000
 HEAD_READ = LONG_LINE + 1
-# One file that has several names gets a copy per name, because the rules that depend on the path (.yaml, .tf) fire
-# only on the copy that has the right name; above this many names, one copy per distinct extension.
-MAX_TWINS = 6
+# One file that has several names gets a copy per different name, because the rules that depend on the path (.yaml, .tf,
+# nuget.config) fire only on the copy that has the right name, and all of them look at the END of the path. A file with
+# more names than this is refused: nothing is left out silently. The name of a copy is cut to its last TWIN_NAME_BYTES.
+MAX_TWINS = 64
+TWIN_NAME_BYTES = 100
 # In front of every copy made for gitleaks: no mark is found in spaces, whatever the format; the newline after them
 # makes gitleaks stop checking the file type once it has read the first piece; and the content starts after byte
 # 40 000, further than any mark it looks for. A line number in a copy is one more than in the file.
@@ -180,9 +184,37 @@ class GuardError(Exception):
     pass
 
 
-def show(text):
-    """Printable form of a path: control characters and undecodable bytes become \\x escapes."""
-    return "".join(c if c.isprintable() else "\\x%02x" % ord(c) for c in text)
+HIDE = []  # the spellings of the .env values, longest first (set by main): a path that holds one is shown without it
+LONG_RUN = re.compile(r"[A-Za-z0-9_]{20,}")
+
+
+def _hide_run(match):
+    run = match.group()
+    return "<hidden>" if any(c.isdigit() for c in run) and any(c.isalpha() for c in run) else run
+
+
+def show(text, mask=True):
+    """Printable form of a path: control characters and undecodable bytes become \\x escapes. A path can hold a
+    secret (a cache called after a URL), so the value of a .env variable in it becomes <secret> and a run of 20
+    letters, digits and underscores that has both letters and digits becomes <hidden>: a token, whatever its
+    kind. That is for what this program prints; gitleaks prints the name of a file it flags on its own."""
+    text = "".join(c if c.isprintable() else "\\x%02x" % ord(c) for c in text)
+    if mask:
+        for spelling in HIDE:
+            text = text.replace(spelling, "<secret>")
+        text = LONG_RUN.sub(_hide_run, text)
+    return text
+
+
+def twin_base(name):
+    """The file name of NAME, cut to its last TWIN_NAME_BYTES bytes (not in the middle of a character): the rules
+    that depend on the path look at the end of it."""
+    raw = name.rsplit("/", 1)[-1].encode("utf-8", "surrogateescape")
+    if len(raw) > TWIN_NAME_BYTES:
+        raw = raw[-TWIN_NAME_BYTES:]
+        while raw and 0x80 <= raw[0] < 0xC0:
+            raw = raw[1:]
+    return raw.decode("utf-8", "surrogateescape")
 
 
 def warn(message):
@@ -467,21 +499,23 @@ def variants(value):
     written 'abcd efgh ijkl mnop' is pasted as 'abcdefghijklmnop'); for hexadecimal values, in lower and upper
     case; and as a file format or a URL writes it: docker compose doubles every $, a URL percent-encodes, JSON and
     YAML escape quotes and backslashes, a shell script escapes $ " ` and \\ in double quotes and writes ' as '\\'' in
-    single quotes, XML writes entities. Only a value with a special character has more than one spelling. Not looked
-    for: base64, hexadecimal or reversed forms of a value, one cut in pieces, or the escapes of a language that is not
-    listed here (Python repr, regular expressions...)."""
+    single quotes, XML writes entities. Two of these at once are covered (docker compose doubling the $ of a value
+    that a YAML string then escapes), three are not. Only a value with a special character has more than one spelling.
+    Not looked for: base64, hexadecimal or reversed forms of a value, one cut in pieces, or the escapes of a language
+    that is not listed here (Python repr, regular expressions...)."""
     out = {value}
     squeezed = "".join(value.split())
     if squeezed != value and len(squeezed) >= MIN_LENGTH:
         out.add(squeezed)
     if re.fullmatch(r"[0-9A-Fa-f]{16,}", value):
         out.update((value.lower(), value.upper()))
-    for spelling in list(out):
-        out.update((spelling.replace("$", "$$"), urllib.parse.quote(spelling, safe="", errors="replace"),
-                    urllib.parse.quote_plus(spelling, errors="replace"), json.dumps(spelling)[1:-1],
-                    json.dumps(spelling, ensure_ascii=False)[1:-1], json.dumps(spelling)[1:-1].replace("/", "\\/"),
-                    spelling.replace("'", "''"), re.sub(r'([$"`\\])', r"\\\1", spelling), spelling.replace("'", "'\\''"),
-                    html.escape(spelling, quote=True)))
+    for _ in range(2):  # twice: one format inside another (compose's $$ in a YAML string, a URL in a JSON string)
+        for spelling in list(out):
+            out.update((spelling.replace("$", "$$"), urllib.parse.quote(spelling, safe="", errors="replace"),
+                        urllib.parse.quote_plus(spelling, errors="replace"), json.dumps(spelling)[1:-1],
+                        json.dumps(spelling, ensure_ascii=False)[1:-1], json.dumps(spelling)[1:-1].replace("/", "\\/"),
+                        spelling.replace("'", "''"), re.sub(r'([$"`\\])', r"\\\1", spelling), spelling.replace("'", "'\\''"),
+                        html.escape(spelling, quote=True)))
     return {value} | {v for v in out if len(v) >= MIN_LENGTH}
 
 
@@ -697,8 +731,9 @@ class Export:
     secret through in all of those. So a file that gitleaks would not read gets a second copy that it does: FILLER (40 000
     spaces and a newline, which no mark can be found in, and after which gitleaks stops looking for one), then the file in
     UTF-8. It is called <twin dir>/<blob id>/<name> when gitleaks reads that name (some rules apply to a path: .yaml, .tf),
-    once for each name of the file (at most MAX_TWINS, then once for each extension), else <twin dir>/<blob id>.txt, or
-    <twin dir>/deps/<blob id>.txt for a lock file. The paths themselves are written by _write_names. The twin is named after the content, so
+    once for each different name of the file (at most MAX_TWINS: a file with more is refused, and a long name keeps its
+    end), else <twin dir>/<blob id>.txt, or <twin dir>/deps/<blob id>.txt for a lock file. The paths themselves are
+    written by _write_names. The twin is named after the content, so
     that the Fingerprint gitleaks prints for a finding in it is the same next time and for that content only.
 
     What gitleaks skips is not listed here, because its list changes with its version: finish() asks it. It puts
@@ -890,19 +925,15 @@ class Export:
         return rel
 
     def _twin_targets(self, blob, why, names, candidates, kept_names):
-        """The places of the twins of one blob: one in deps/ for a lock file, else one per readable name, so that the
-        rules that depend on the path fire for each of them (at most MAX_TWINS; above that one per extension), or
-        _scan/<blob id>.txt when gitleaks reads none of the names."""
+        """The places of the twins of one blob: one in deps/ for a lock file, else one per different readable name,
+        so that the rules that depend on the path fire for each of them (more than MAX_TWINS is an error, not a
+        shortcut), or _scan/<blob id>.txt when gitleaks reads none of the names."""
         if why == ["gitleaks skips the name"] and all(DEPENDENCY_LIST.fullmatch(basename(n)) for n in names):
             return [f"{self.twin_dir}/deps/{blob[:12]}.txt"]
         readable = sorted({c for c in candidates.get(blob, []) if c in kept_names}, key=lambda c: (c.lower(), c))
         if len(readable) > MAX_TWINS:
-            by_extension = {}
-            for candidate in readable:
-                base = candidate.rsplit("/", 1)[-1].lower()
-                extension = base.rsplit(".", 1)[-1] if "." in base.strip(".") else base
-                by_extension.setdefault(extension, candidate)
-            readable = sorted(by_extension.values(), key=lambda c: (c.lower(), c))[:MAX_TWINS]
+            raise GuardError(f"the file [blob {blob[:10]}] has {len(readable)} different names, and gitleaks cannot be "
+                             f"asked about more than {MAX_TWINS} of them: commit it under fewer names.")
         return readable or [f"{self.twin_dir}/{blob[:12]}.txt"]
 
     def _write_names(self):
@@ -954,8 +985,8 @@ class Export:
         candidates = {}
         for blob, (names, rels, _, _) in merged.items():
             for name in names:
-                base = name.rsplit("/", 1)[-1]
-                if 0 < len(base) <= 100 and base not in (".", ".."):
+                base = twin_base(name)
+                if base and base not in (".", ".."):
                     candidates.setdefault(blob, []).append(f"{self.twin_dir}/{blob[:12]}/{base}")
         blind_rels, blind_keys, kept_names = self._ask(
             [r for _, rels, _, _ in merged.values() for r in rels], key_paths, [c for cs in candidates.values() for c in cs])
@@ -1000,11 +1031,13 @@ class Export:
                       f"file called {self.twin_dir}/<id>.txt, {self.twin_dir}/<id>/<name> or {self.twin_dir}/deps/<id>.txt is in:"]
         for copy, names, why in self.twins[:200]:
             more = f" (and {len(names) - 1} other name(s))" if len(names) > 1 else ""
-            lines.append(f"  {copy} = {show(names[0])}{more}: {why}")
+            lines.append(f"  {show(copy)} = {show(names[0])}{more}: {why}")
         if len(self.twins) > 200:
             lines.append(f"  ... and {len(self.twins) - 200} more")
         if self.twins:
             lines.append("The Fingerprint of such a finding names the copy by its content: it stays valid for that content only.")
+            lines.append("<id> is the start of the object id of the file: `git ls-files -s | grep <id>` (after a push check: "
+                         "`git log --all --oneline --find-object=<id>`) finds it. A name that holds a secret is shown without it.")
         try:
             with open(self.listing, "w") as handle:
                 handle.write("\n".join(lines) + "\n")
@@ -1012,13 +1045,13 @@ class Export:
             warn(f"cannot write the list of copies: {exc.strerror}")
 
 
-def scan_name(report, export, sha, path):
+def scan_name(report, export, sha, path, kind="blob"):
     """The path of a file can hold a secret (a cache called after a URL). It is looked at as text, and given to
-    gitleaks as a file of its own; the report does not print it."""
+    gitleaks as a file of its own; the report does not print it. A submodule has a path and no content here."""
     if export is not None:
         export.add_name(path)
     scanned = report.scanned
-    report.content(f"the name of a file [blob {sha[:10]}]", path.encode("utf-8", "surrogateescape"))
+    report.content(f"the name of a file [{kind} {sha[:10]}]", path.encode("utf-8", "surrogateescape"))
     report.scanned = scanned  # the summary counts files, and a name is not one
 
 
@@ -1026,7 +1059,7 @@ def scan_staged(report, blobs, export=None):
     for mode, sha, path in list(staged_entries()):
         if carrier_name(path):
             report.carrier(path)
-        scan_name(report, export, sha, path)
+        scan_name(report, export, sha, path, "submodule" if mode == "160000" else "blob")
         if mode == "160000":  # a submodule: no content here
             continue
         data = blobs.get(sha)
@@ -1104,13 +1137,20 @@ def scan_objects(report, blobs, rev_args, where, export=None):
     entries = {}  # blob id -> every path it has in these commits
     for sha, names in list_objects(rev_args).items():
         entries[sha] = set(names)
+    submodules = {}  # path -> commit id: a commit of another repository, so no content here, but a public path
     for path, sha, mode in changed_files(rev_args):
-        if mode != "160000":  # a submodule is a commit of another repository
+        if mode == "160000":
+            submodules[path] = sha
+        else:
             entries.setdefault(sha, set()).add(path)
     for names in entries.values():
         for path in names:
             if carrier_name(path):
                 report.carrier(f"{path} ({where})")
+    for path, sha in sorted(submodules.items()):
+        if carrier_name(path):
+            report.carrier(f"{path} ({where})")
+        scan_name(report, export, sha, path, "submodule")
     for sha, names in entries.items():
         for path in sorted(names):
             scan_name(report, export, sha, path)
@@ -1125,7 +1165,7 @@ def scan_objects(report, blobs, rev_args, where, export=None):
 def scan_range(report, blobs, rev_args, export=None):
     for arg in rev_args:
         if not re.fullmatch(r"\^?[0-9a-fA-F]{40}|\^?[0-9a-fA-F]{64}|--not|--remotes=.+", arg, re.S):  # a URL may hold spaces
-            raise GuardError(f"unexpected revision argument: {show(arg)}")
+            raise GuardError(f"unexpected revision argument: {show(arg, mask=False)}")
     scan_objects(report, blobs, rev_args, "in the commits to push", export)
     for entry in git("log", "-z", "--format=%h%n%B", *rev_args).split(b"\0"):
         head, _, body = entry.partition(b"\n")
@@ -1158,6 +1198,7 @@ def main(argv):
     os.chdir(git("rev-parse", "--show-toplevel").decode("utf-8", "surrogateescape").strip())
 
     secrets = load_secrets()
+    HIDE[:] = sorted({spelling for value in secrets for spelling in variants(value)}, key=len, reverse=True)
     if not secrets and mode in ("--tree", "--history"):
         print("secret-guard: no .env values found on this machine: only file names are checked.")
     report = Report(needles_for(secrets))

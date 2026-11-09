@@ -6,7 +6,7 @@
 # gate before the commits become public. It runs the pre-commit checks on everything the push
 # would send, i.e. the commits the remote does not have yet:
 #
-#   1. secret-guard.py --range: file names, .env values, commit messages, the names and
+#   1. secret-guard.py --range: file names (the paths of submodules too), .env values, commit messages, the names and
 #      addresses of the author and the committer, and the names of the branch or tag. A
 #      secret can be part of a path or of a ref, so the paths are given to gitleaks as small
 #      files too. It also copies every file the commits add or change (each version of it,
@@ -93,9 +93,9 @@ if [ -n "$gitleaks" ] && ! gitleaks_selftest; then
   status=1
 fi
 vault_check="$root/ansible/scripts/check-vault-encrypted.sh"
-tmp=$(mktemp "${TMPDIR:-/tmp}/pre-push.XXXXXX")
-trap 'rm -f "$tmp"; if [ -n "$export_dir" ]; then rm -rf "$export_dir"; fi' EXIT
+trap 'remove_temp pre-push' EXIT
 exit_on_signals
+tmp=$(mktemp "${TMPDIR:-/tmp}/pre-push.$$.XXXXXX")
 
 # One line per ref to push: <local ref> <local oid> <remote ref> <remote oid>
 while read -r local_ref local_oid remote_ref remote_oid; do
@@ -128,7 +128,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
   fi
   if [ -n "$python" ]; then
     if [ -n "$gitleaks" ]; then
-      export_dir=$(mktemp -d "${TMPDIR:-/tmp}/pre-push.XXXXXX")
+      export_dir=$(mktemp -d "${TMPDIR:-/tmp}/pre-push.$$.XXXXXX")
     fi
     guard_rc=0
     run_secret_guard --range "$@" </dev/null || guard_rc=$?
@@ -201,7 +201,8 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     fi
     echo "Remove it from the commits (rewrite them), and rotate it if it ever left this machine." >&2
     echo "False positive: add 'gitleaks:allow' in a comment on the line, or the finding's Fingerprint" >&2
-    echo "to .gitleaksignore (it names the blob, so it stays valid)." >&2
+    echo "to .gitleaksignore (it names the blob, so it stays valid). For the name of a file (_scan/names/...)" >&2
+    echo "only the Fingerprint works." >&2
     status=1
   fi
 done

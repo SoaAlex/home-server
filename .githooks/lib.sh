@@ -47,6 +47,14 @@ gitleaks_has_flag() {
 
 # Make a signal end the hook through its EXIT trap, which removes the temporary files: dash and busybox sh do not run
 # an EXIT trap when a signal kills them. Call it after the trap on EXIT is set.
+# The temporary files and directories of a hook are called <hook>.<process id>.XXXXXX, and remove_temp <hook> removes all of
+# them. The EXIT trap is set BEFORE the first one is made and does not need the name that mktemp printed: a signal can arrive
+# between the creation of a file and the assignment of its name, and a trap that only knows the names it was given would
+# leave the file behind (for commit-msg, a copy of the message). Signals are not ignored to avoid that.
+remove_temp() {
+  rm -rf "${TMPDIR:-/tmp}/$1".$$.*
+}
+
 exit_on_signals() {
   trap 'exit 129' HUP
   trap 'exit 130' INT

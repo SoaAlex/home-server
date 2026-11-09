@@ -7,7 +7,8 @@
 #      .env file, or in the name of a staged file (the names are given to gitleaks as files
 #      too). Catches secrets that have no recognizable shape. It also copies the
 #      staged files into a temporary directory for gitleaks, and a second time, with
-#      40 000 spaces and a newline in front and under a name gitleaks reads, those it
+#      40 000 spaces and a newline in front and under each name gitleaks reads (one copy
+#      for each different name of the file, up to 64; a file with more is refused), those it
 #      would skip: by name (lock files, images, vendored directories...), by what the
 #      file begins with or holds at a fixed place (a SQLite database, an executable, an
 #      archive, a PDF, a text file that starts with "MZ"), because its first line is
@@ -41,7 +42,7 @@ root=$(git rev-parse --show-toplevel)
 cd "$root"
 status=0
 export_dir=
-trap 'if [ -n "$export_dir" ]; then rm -rf "$export_dir"; fi' EXIT
+trap 'remove_temp pre-commit' EXIT
 exit_on_signals
 
 python=$(find_python) || python=
@@ -66,7 +67,7 @@ fi
 # --- 1. file names and .env values, and the copies for gitleaks ---------------
 if [ -n "$python" ]; then
   if [ -n "$gitleaks" ]; then
-    export_dir=$(mktemp -d "${TMPDIR:-/tmp}/pre-commit.XXXXXX")
+    export_dir=$(mktemp -d "${TMPDIR:-/tmp}/pre-commit.$$.XXXXXX")
   fi
   if ! run_secret_guard --staged; then
     status=1
@@ -83,7 +84,7 @@ if [ -n "$export_dir" ] && export_has_files "$export_dir"; then
       echo "pre-commit: gitleaks reported a problem (exit $rc)."
       echo "Real secret: remove it from the staged change, and rotate it if it ever left this machine."
       echo "False positive: add 'gitleaks:allow' in a comment on the line, or its Fingerprint"
-      echo "(shown above) to .gitleaksignore."
+      echo "(shown above) to .gitleaksignore. For the name of a file (_scan/names/...) only the Fingerprint works."
     } >&2
     status=1
   fi

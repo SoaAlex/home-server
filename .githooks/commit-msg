@@ -27,9 +27,9 @@ if [ -z "$python" ]; then
   exit 1
 fi
 gitleaks=$(find_gitleaks) || gitleaks=
-tmp=$(mktemp "${TMPDIR:-/tmp}/commit-msg.XXXXXX")
-trap 'rm -f "$tmp"' EXIT
+trap 'remove_temp commit-msg' EXIT
 exit_on_signals
+tmp=$(mktemp "${TMPDIR:-/tmp}/commit-msg.$$.XXXXXX")
 status=0
 
 # --- secrets in the message ---------------------------------------------------
