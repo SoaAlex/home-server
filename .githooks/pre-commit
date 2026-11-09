@@ -5,14 +5,17 @@
 #      Terraform state, key stores, vault password files; templates such as
 #      .env.example pass), and no staged content holds the value of a secret from a
 #      .env file. Catches secrets that have no recognizable shape. It also copies the
-#      staged files into a temporary directory for gitleaks, and a second time, under
-#      a name gitleaks reads, those it would skip by name (lock files, images,
-#      vendored directories...) and those in UTF-16 or UTF-32.
+#      staged files into a temporary directory for gitleaks, and a second time, with a
+#      newline in front and under a name gitleaks reads, those it would skip: by name
+#      (lock files, images, vendored directories...), by what the file begins with (a
+#      SQLite database, an executable, an archive, a PDF, a text file that starts with
+#      "MZ"), and those in UTF-16 or UTF-32. It asks gitleaks what it skips; a gitleaks
+#      that does not report a token it is given refuses the commit.
 #   2. gitleaks scan of that directory, configured by .gitleaks.toml. Findings are
 #      printed redacted. gitleaks reads the files themselves and not `git diff
 #      --staged`, which a git setting (colors, attributes, a diff driver) or a file
 #      that git takes for binary can leave empty without any error. A staged file is
-#      scanned whole, not only its added lines. A finding in _scan/<n>.txt is in a copy
+#      scanned whole, not only its added lines. A finding in _scan/<id>.txt is in a copy
 #      of a staged file, and the list printed after the findings says which one.
 #   3. Ansible Vault files must be encrypted
 #      (ansible/scripts/check-vault-encrypted.sh).
@@ -35,6 +38,7 @@ cd "$root"
 status=0
 export_dir=
 trap 'if [ -n "$export_dir" ]; then rm -rf "$export_dir"; fi' EXIT
+exit_on_signals
 
 python=$(find_python) || python=
 gitleaks=$(find_gitleaks) || gitleaks=

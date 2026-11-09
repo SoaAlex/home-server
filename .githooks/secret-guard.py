@@ -27,14 +27,16 @@ binary/text guess, and then hand gitleaks nothing). Give the options before the 
     secret-guard.py --export DIR --gitleaks BIN [--gitleaks-config FILE] --staged
     secret-guard.py --export DIR --gitleaks BIN [--gitleaks-config FILE] --range REV...
 
-DIR/files holds the copies for gitleaks to scan. gitleaks skips some files by name (lock files,
-images, vendored directories, anything called gitleaks.toml...) and cannot read UTF-16: a text file of
-that kind is copied a second time, as DIR/files/_scan/<n>.txt (in UTF-8), and DIR/MAP says which file
-each copy is. The names it skips are found by asking it (see Export).
+DIR/files holds the copies for gitleaks to scan. gitleaks skips some files without a word: by name (lock
+files, images, vendored directories, anything called gitleaks.toml...), by what they begin with (SQLite
+databases, executables, archives, PDFs, Office documents, a text file that starts with "MZ"...), and it cannot
+read UTF-16. Such a file is copied a second time, with a newline in front, as DIR/files/_scan/<blob id>.txt (in
+UTF-8), and DIR/MAP says which file each copy is. What gitleaks skips is found by asking it (see Export): if it
+cannot answer, or does not report a token it is given, this exits 2.
 
 It prints paths, line numbers and variable names, never a value. Write `gitleaks:allow` (or
 `secret-guard:allow`) on a line to accept a value that is meant to be there; files over 32 MB are
-read in chunks and do not honor it. Run it with `python3 -I`.
+read in chunks and do not honor it. Files over 64 MB are not copied for gitleaks (announced). Run it with `python3 -I`.
 Exit status: 0 clean, 1 something found, 2 the check itself failed (treat it as a failure).
 SECRET_GUARD_ALLOW_UNREADABLE=1 turns an unreadable .env file from a failure into a warning.
 """
@@ -55,10 +57,20 @@ WHOLE_BYTES = int(os.environ.get("SECRET_GUARD_WHOLE_BYTES") or 32 * 1024 * 1024
 CHUNK_BYTES = max(1, int(os.environ.get("SECRET_GUARD_CHUNK_BYTES") or 8 * 1024 * 1024))
 # Files copied for gitleaks (--export) up to this size; the .env values are checked at any size.
 EXPORT_MAX_BYTES = int(os.environ.get("SECRET_GUARD_EXPORT_MAX_BYTES") or 64 * 1024 * 1024)
-# What the probe puts in a file to see whether gitleaks reads a file of that name: a line shaped like a GitHub
-# token, written in pieces so that no scan of this very file flags it.
-PROBE_LINE = ("token = ghp_" + "Q7xK2mV9bR4t" + "Y8nL3cW6dF1hJ5sZ0pAe2uGv" + "\n").encode()
+# What the probe puts in a file to see whether gitleaks reads it: a line shaped like a GitHub token, written in
+# pieces so that no scan of this very file flags it.
+PROBE_TOKEN = "ghp_" + "Q7xK2mV9bR4t" + "Y8nL3cW6dF1hJ5sZ0pAe2uGv"
+PROBE_LINE = ("token = " + PROBE_TOKEN + "\n").encode()
 TWIN_DIR = "_scan"
+# gitleaks takes a file for a format it skips from the first bytes it reads (fixed offsets, the furthest at about
+# 32 KB); the key of a text file is the part of its start that matters for the formats made of printable bytes.
+HEAD_BYTES = 33 * 1024
+KEY_BYTES = 32
+# Lock files and checksum lists: gitleaks skips them by name because they are full of hashes that look like keys.
+# Their copies go to _scan/deps/, where .gitleaks.toml switches off the one rule that fires on hashes.
+DEPENDENCY_LIST = re.compile(
+    r"go\.(?:sum|work\.sum)|verification-metadata\.xml|npm-shrinkwrap\.json|package\.resolved"
+    r"|.*\.lock(?:file)?|.*-lock\.(?:json|ya?ml)|.*\.lock\.[a-z0-9]+", re.I | re.S)
 
 # --- names ----------------------------------------------------------------------------------
 TEMPLATE = re.compile(r".*\.(?:example|sample|template|dist|tpl)|.*\.(?:example|sample|template|dist|tpl)\.env", re.S)
@@ -96,8 +108,10 @@ def carrier_name(path):
 # password, whatever the variable is called; the user part may be empty (redis://:pw@host).
 SECRET_WORDS = {"PASS", "PASSWORD", "PASSWD", "PASSPHRASE", "PASSCODE", "PWD", "PSK", "SECRET", "TOKEN", "KEY",
                 "APIKEY", "WEBHOOK", "CRED", "CREDS", "CREDENTIAL", "CREDENTIALS", "SALT", "DSN", "BEARER", "COOKIE",
-                "SEED", "PAT", "JWT", "MNEMONIC", "TOPIC"}
+                "SEED", "PAT", "JWT", "MNEMONIC"}
 SECRET_SUFFIXES = ("PASSWORD", "PASSWD", "PASSPHRASE", "SECRET", "TOKEN", "APIKEY")
+# A topic is a secret when it is the name of a public channel that anyone who knows it can read (ntfy.sh): a
+# single word. An MQTT topic is a path with slashes (frigate/events), written all over the configuration.
 URL_PASSWORD = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^:/@\s]*:([^@/\s]+)@")
 URL_TAIL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s]*([/?#].*)", re.S)
 URL_PART_SPLIT = re.compile(r"[/?&=#;,]+")
@@ -166,6 +180,11 @@ def secret_name(name):
     if words[-1] == "AUTH":
         return True
     return any(a == "PATH" and b == "PREFIX" for a, b in zip(words, words[1:]))
+
+
+def topic_name(name):
+    words = name_words(name)
+    return bool(words) and words[-1] != "FILE" and "TOPIC" in words
 
 
 def entropy(text):
@@ -324,10 +343,23 @@ def decode_text(data):
     return data.decode(text_codec(data) or "utf-8-sig", "replace")
 
 
-def utf8_view(data):
-    """What a text scanner has to read: UTF-16 and UTF-32 text as UTF-8, anything else as it is."""
-    codec = text_codec(data)
-    return data if codec is None else data.decode(codec, "replace").encode("utf-8")
+CONTROL_BYTES = re.compile(rb"[\x00-\x08\x0b\x0e-\x1f\x7f]")
+
+
+def classify(head):
+    """(kind, codec) of a file from its first bytes: 'wide' for UTF-16 or UTF-32 text (and its codec), 'text' for
+    UTF-8 text without control characters, 'binary' for anything else."""
+    codec = text_codec(head)
+    if codec:
+        return "wide", codec
+    if CONTROL_BYTES.search(head):
+        return "binary", None
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        if exc.start < len(head) - 3:  # a character cut by the end of HEAD_BYTES is not an error
+            return "binary", None
+    return "text", None
 
 
 def refuse_unreadable(problems):
@@ -358,7 +390,7 @@ def collect_secrets(secrets, text, label):
         if url:
             found.append(url.group(1))
         found.extend(url_secrets(value))
-        if secret_name(name):
+        if secret_name(name) or (topic_name(name) and "/" not in value):
             found.append(value)
         for secret in found:
             if usable(secret, defined, literal):
@@ -604,17 +636,21 @@ def staged_entries():
 class Export:
     """Copies of the scanned files, in a directory the hook made, for gitleaks to read.
 
-    gitleaks decides by the NAME of a file whether to look inside it: lock files, images, fonts, vendored
-    directories, everything called gitleaks.toml and more are skipped without a word, and UTF-16 text is bytes
-    that match nothing. A scan of the files themselves would let a secret through in those. So a file
-    that gitleaks would not read also gets a copy under a name it does read, <twin dir>/<n>.txt (a name made
-    of the file's own, even with its dots changed, can still match what gitleaks skips: its patterns use `.`
-    as a wildcard), and UTF-16 or UTF-32 text a copy in UTF-8.
+    gitleaks decides by itself whether to look inside a file, and it does not say when it does not: it skips
+    lock files, images, fonts, vendored directories and everything called gitleaks.toml by NAME; it skips a file
+    that BEGINS like an executable, a SQLite database, an archive, a PDF, an Office document or a font, whatever
+    its name (a text file that starts with "MZ" too); and UTF-16 text is bytes that match nothing. A scan of the
+    files themselves would let a secret through in all of those. So a file that gitleaks would not read gets a
+    second copy that it does: <twin dir>/<blob id>.txt, with a newline in front (no format it skips starts that
+    way), in UTF-8. The twin is named after the content, so that the Fingerprint gitleaks prints for a finding in
+    it is the same next time and for that content only.
 
-    The names gitleaks skips are not listed here, because its list changes with its version: probe() asks it,
-    with a file of each name that holds a token, and checks that the names of the copies are read. When the
-    answer cannot be read, every file gets a copy. A file under a name gitleaks reads is copied once, as it is
-    (gitleaks opens archives by their extension, and reads binary files too).
+    What gitleaks skips is not listed here, because its list changes with its version: finish() asks it. It puts
+    a token in a file of every name, and in a file of every distinct start of a text file, and sees which ones
+    gitleaks reports. A test file that must be read, and a copy of the kind that must be read, prove that the
+    answer means something; when they are not reported, gitleaks cannot be trusted and this raises an error
+    rather than guess. A file that does not look like text gets a twin without asking: gitleaks has no
+    recognisable rule for it.
 
     The directory holds `files/`, which gitleaks scans, and `MAP`, which says what each copy is."""
 
@@ -627,135 +663,208 @@ class Export:
             os.mkdir(self.tree)
         except OSError as exc:
             raise GuardError(f"cannot prepare {show(self.tree)} for gitleaks: {exc.strerror}")
-        self.blind = set()       # names that gitleaks does not read
-        self.everything = False  # the probe failed: treat every name as one that gitleaks does not read
-        self.twin_dir, self.counter = TWIN_DIR, 0
-        self.twins, self.skipped = [], []
-
-    def probe(self, names):
-        """Find out which of NAMES (the relative paths of the files about to be copied) gitleaks skips."""
-        names = sorted(set(names))
-        if not names:
-            return
-        tops = {n.split("/")[0] for n in names}
-        while self.twin_dir in tops:  # a file of the change is called _scan: use another directory
-            self.twin_dir += "_"
-        try:
-            asked = self._ask(names)
-        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
-            asked = None
-        if asked is None:
-            self.everything = True
-            warn("could not ask gitleaks which files it skips: every text file is also scanned as a copy.")
-        else:
-            self.blind = asked
-
-    def _ask(self, names):
-        """The names that gitleaks reported nothing for, or None when it could not be asked. A file of each
-        name holds PROBE_LINE; a file that is read is reported, one that is skipped is not. A control file
-        under a name that is always read proves that the report means something, and a file under the name
-        of the first copy proves that the copies are read."""
-        control = "0-control.txt"
-        while control in names:
-            control = "_" + control
-        copy = self._copy_name(0)
-        work = tempfile.mkdtemp(prefix=".probe.", dir=self.base)
-        try:
-            tree, report = os.path.join(work, "tree"), os.path.join(work, "report.json")
-            for name in [control, copy, *names]:
-                full = os.path.join(tree, *name.split("/"))
-                try:
-                    os.makedirs(os.path.dirname(full), exist_ok=True)
-                    with open(full, "wb") as handle:
-                        handle.write(PROBE_LINE)
-                except OSError:
-                    if name in (control, copy):
-                        return None  # a name that cannot be created is simply not reported, so it gets a copy
-            cmd = [self.gitleaks, "dir", "--no-banner", "--no-color", "--log-level", "error", "--exit-code", "2",
-                   "--report-format", "json", "--report-path", report]
-            if self.config:
-                cmd += ["--config", self.config]
-            done = subprocess.run(cmd + ["."], cwd=tree, stdin=subprocess.DEVNULL, capture_output=True)
-            if done.returncode != 2 or not os.path.isfile(report):
-                return None
-            with open(report, "rb") as handle:
-                seen = {str(finding["File"]).replace(os.sep, "/") for finding in json.load(handle)}
-            if control not in seen:
-                return None
-            if copy not in seen:
-                raise GuardError(f"gitleaks does not read a file called {copy}: its copies would not be scanned")
-            return {name for name in names if name not in seen}
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
-
-    def _copy_name(self, number):
-        return f"{self.twin_dir}/{number}.txt"
+        self.twin_dir = TWIN_DIR
+        self.copies = []   # [blob id, names, relative paths of the copies, path of the first copy, size]
+        self.twins = []    # (relative path of the twin, names, why)
+        self.skipped = []
 
     def _target(self, name):
+        """(path, path relative to the tree) of a free place for a copy called NAME. A name that is taken (two
+        names that differ only by case, on a file system that folds case) or that cannot exist beside the others
+        (a file `pkg` and a file `pkg/__init__.py` that share a blob in one push) gets its first directory renamed."""
         parts = name.split("/")
         if name.startswith("/") or any(p in ("", ".", "..") for p in parts):
             raise GuardError(f"cannot copy a file called {show(name)} for gitleaks")
-        full = os.path.join(self.tree, *parts)
-        try:
-            os.makedirs(os.path.dirname(full), exist_ok=True)
-        except OSError as exc:
-            raise GuardError(f"cannot copy {show(name)} for gitleaks: {exc.strerror}")
-        taken, number = full, 1
-        while os.path.lexists(taken):  # two names that differ only by case, on a file system that folds case
-            taken, number = f"{full}.{number}", number + 1
-        return taken
+        for attempt in range(1000):
+            top = parts[0] if attempt == 0 else f"{parts[0]}~{attempt}"
+            full = os.path.join(self.tree, top, *parts[1:])
+            try:
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                os.close(os.open(full, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))  # the place is ours from now on
+            except (FileExistsError, NotADirectoryError, IsADirectoryError):
+                continue  # taken, or one of the directories on the way is a file
+            except OSError as exc:
+                raise GuardError(f"cannot copy {show(name)} for gitleaks: {exc.strerror}")
+            return full, "/".join([top, *parts[1:]])
+        raise GuardError(f"cannot find a place for a copy of {show(name)}")
 
-    def _twin(self, names, content, why):
-        copy = self._copy_name(self.counter)
-        self.counter += 1
-        with open(self._target(copy), "wb") as handle:
-            handle.write(content)
-        self.twins.append((copy, names, why))
-
-    def take(self, names, data):
-        """Copy a file under each of NAMES (and, when it needs one, as a twin). The data comes back for the
-        other checks; a Big is copied while it is read."""
+    def take(self, blob, names, data):
+        """Copy a file under each of NAMES. The data comes back for the other checks; a Big is copied while it
+        is read. The second copy, if the file needs one, is made by finish()."""
         big = isinstance(data, Big)
         size = data.size if big else len(data)
         if size > EXPORT_MAX_BYTES:
             self.skipped.append(names[0])
             return data
-        unread = self.everything or any(n in self.blind for n in names)
+        failing = names[0]
         try:
-            targets = [self._target(n) for n in names]
+            targets = []
+            for failing in names:
+                targets.append(self._target(failing))
             if big:
-                data.sinks = [open(t, "wb") for t in targets]
-                if unread:  # too big to hold, so no second copy: it is announced instead
-                    self.skipped.append(names[0])
-                return data
-            for target in targets:
-                with open(target, "wb") as handle:
-                    handle.write(data)
-            view = utf8_view(data)
-            if view is not data:
-                self._twin(names, view, "UTF-16 or UTF-32 text, as UTF-8")
-            elif unread:
-                self._twin(names, data, "gitleaks skips the name")
+                data.sinks = [open(path, "wb") for path, _ in targets]
+            else:
+                for path, _ in targets:
+                    with open(path, "wb") as handle:
+                        handle.write(data)
         except OSError as exc:
-            raise GuardError(f"cannot copy {show(names[0])} for gitleaks: {exc.strerror}")
+            raise GuardError(f"cannot copy {show(failing)} for gitleaks: {exc.strerror}")
+        self.copies.append([blob, list(names), [rel for _, rel in targets], targets[0][0], size])
         return data
+
+    def _sample(self, tree, rel, content):
+        full = os.path.join(tree, *rel.split("/"))
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "wb") as handle:
+            handle.write(content)
+
+    def _ask(self, rels, keys):
+        """(the relative paths gitleaks skips, the keys it skips). RELS are the paths of the copies, KEYS the
+        distinct starts of text files. A file of each holds PROBE_LINE: one that is read is reported, one that is
+        skipped is not. Raises GuardError when the report cannot be trusted."""
+        tops = {r.split("/")[0] for r in rels}
+        control = "0-control.txt"
+        while control in rels:
+            control = "_" + control
+        key_dir = "_k"
+        while key_dir in tops or key_dir == self.twin_dir:
+            key_dir += "_"
+        shapes = {  # a copy of each kind that must be read, and why it matters that it is
+            f"{self.twin_dir}/000000000000.txt": (PROBE_LINE, "a copy"),
+            f"{self.twin_dir}/deps/000000000000.txt": (PROBE_LINE, "a copy of a lock file"),
+            f"{self.twin_dir}/canary-1.txt": (b"\nSQLite format 3\x00" + b"\x00" * 90 + b"\n" + PROBE_LINE, "a copy of a database"),
+            f"{self.twin_dir}/canary-2.txt": (b"\n\x7fELF\x02\x01\x01\x00" + bytes(range(1, 256)) * 3 + b"\n" + PROBE_LINE, "a copy of an executable"),
+        }
+        key_files = {key: f"{key_dir}/{n}.txt" for n, key in enumerate(sorted(keys))}
+        work = tempfile.mkdtemp(prefix=".probe.", dir=self.base)
+        try:
+            tree, report = os.path.join(work, "tree"), os.path.join(work, "report.json")
+            try:
+                self._sample(tree, control, PROBE_LINE)
+                for rel, (content, _) in shapes.items():
+                    self._sample(tree, rel, content)
+                for key, rel in key_files.items():
+                    self._sample(tree, rel, key + b"\n" + PROBE_LINE)
+            except OSError as exc:
+                raise GuardError(f"cannot prepare the test files for gitleaks: {exc.strerror}")
+            for rel in rels:
+                try:
+                    self._sample(tree, rel, PROBE_LINE)
+                except OSError:
+                    pass  # a name that cannot be created is not reported, so its file gets a twin
+            cmd = [self.gitleaks, "dir", "--no-banner", "--no-color", "--log-level", "error", "--exit-code", "2",
+                   "--report-format", "json", "--report-path", report]
+            if self.config:
+                cmd += ["--config", self.config]
+            try:
+                done = subprocess.run(cmd + ["."], cwd=tree, stdin=subprocess.DEVNULL, capture_output=True)
+            except OSError as exc:
+                raise GuardError(f"cannot run gitleaks: {exc.strerror or exc}")
+            last = (done.stderr.decode("utf-8", "replace").strip().splitlines() or [""])[-1][:160]
+
+            def untrusted(what):
+                return GuardError("gitleaks cannot be trusted: given files that hold a token, it " + what + ". "
+                                  "Is GITLEAKS_BIN a wrapper that cannot see the files, or a stub?"
+                                  + (" (" + last + ")" if last else ""))
+
+            if done.returncode != 2 or not os.path.isfile(report):
+                raise untrusted(f"exited {done.returncode} and reported nothing")
+            try:
+                with open(report, "rb") as handle:
+                    findings = json.load(handle)
+                seen = {str(f["File"]).replace(os.sep, "/") for f in findings
+                        if PROBE_TOKEN in str(f.get("Secret", "")) + str(f.get("Match", ""))}
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                raise untrusted("wrote a report that cannot be read")
+            if control not in seen:
+                raise untrusted("did not report it in a plain text file (does .gitleaks.toml allow it?)")
+            for rel, (_, what) in shapes.items():
+                if rel not in seen:
+                    raise GuardError(f"gitleaks cannot be trusted: it did not report a token in {what}, so "
+                                     "the copies that this check relies on would go unscanned.")
+            return ({rel for rel in rels if rel not in seen}, {key for key, rel in key_files.items() if rel not in seen})
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    def _write_twin(self, rel, source, codec):
+        """The twin: a newline, then the file, as UTF-8 when it is UTF-16 or UTF-32 (decoded in pieces)."""
+        path, rel = self._target(rel)
+        decoder = codecs.getincrementaldecoder(codec)("replace") if codec else None
+        try:
+            with open(source, "rb") as src, open(path, "wb") as dst:
+                dst.write(b"\n")
+                for chunk in iter(lambda: src.read(CHUNK_BYTES), b""):
+                    dst.write(decoder.decode(chunk).encode("utf-8") if decoder else chunk)
+                if decoder:
+                    dst.write(decoder.decode(b"", True).encode("utf-8"))
+        except OSError as exc:
+            raise GuardError(f"cannot make a copy of {show(source)} for gitleaks: {exc.strerror}")
+        return rel
+
+    def finish(self):
+        """Call once every file is copied (and, for a Big, read to its end): ask gitleaks what it would not read of
+        the copies, and give each such file its twin."""
+        merged = {}
+        for blob, names, rels, path, size in self.copies:
+            if size == 0:
+                continue  # nothing in it
+            if blob in merged:
+                merged[blob][0].extend(names)
+                merged[blob][1].extend(rels)
+            else:
+                merged[blob] = [list(names), list(rels), path]
+        if not merged:
+            return
+        tops = {n.split("/")[0] for names, _, _ in merged.values() for n in names}
+        while self.twin_dir in tops:  # a file of the change is called _scan: use another directory
+            self.twin_dir += "_"
+        shapes = {}
+        for blob, (names, rels, path) in merged.items():
+            try:
+                with open(path, "rb") as handle:
+                    head = handle.read(HEAD_BYTES)
+            except OSError as exc:
+                raise GuardError(f"cannot read the copy of {show(names[0])}: {exc.strerror}")
+            kind, codec = classify(head)
+            shapes[blob] = (kind, codec, head[:KEY_BYTES] if kind == "text" else None)
+        blind_rels, blind_keys = self._ask([r for _, rels, _ in merged.values() for r in rels],
+                                           {key for _, _, key in shapes.values() if key is not None})
+        for blob, (names, rels, path) in merged.items():
+            kind, codec, key = shapes[blob]
+            why = []
+            if any(r in blind_rels for r in rels):
+                why.append("gitleaks skips the name")
+            if kind == "wide":
+                why.append("UTF-16 or UTF-32 text, as UTF-8")
+            elif kind == "binary":
+                why.append("it starts with binary data, and gitleaks skips some formats by that")
+            elif key in blind_keys:
+                why.append("gitleaks skips a file that starts like this")
+            if not why:
+                continue
+            only_names = why == ["gitleaks skips the name"]
+            sub = "deps/" if only_names and all(DEPENDENCY_LIST.fullmatch(basename(n)) for n in names) else ""
+            twin = self._write_twin(f"{self.twin_dir}/{sub}{blob[:12]}.txt", path, codec)
+            self.twins.append((twin, names, "; ".join(why)))
 
     def note(self):
         """Warn about what was not copied, and write MAP: the hook prints it when gitleaks finds something,
-        because a finding in a copy is named _scan/<n>.txt."""
+        because a finding in a copy is named _scan/<blob id>.txt."""
         if self.skipped:
             warn(f"{len(self.skipped)} file(s) were not given to gitleaks, being too large to copy (over "
-                 f"{EXPORT_MAX_BYTES >> 20} MB, or over {WHOLE_BYTES >> 20} MB under a name it skips); the .env values "
-                 "were still checked: " + ", ".join(show(p) for p in self.skipped[:5]))
+                 f"{EXPORT_MAX_BYTES >> 20} MB); the .env values were still checked: "
+                 + ", ".join(show(p) for p in self.skipped[:5]))
         if not self.twins:
             return
-        lines = ["secret-guard: gitleaks does not read some files as they are, so it scanned copies. A finding in a",
-                 "file called _scan/<n>.txt is in:"]
+        lines = ["secret-guard: gitleaks does not read some files as they are, so it scanned copies (a newline was put",
+                 "in front: a line number in a copy is one more than in the file). A finding in a file called",
+                 f"{self.twin_dir}/<id>.txt is in:"]
         for copy, names, why in self.twins[:200]:
             more = f" (and {len(names) - 1} other name(s))" if len(names) > 1 else ""
             lines.append(f"  {copy} = {show(names[0])}{more}: {why}")
         if len(self.twins) > 200:
             lines.append(f"  ... and {len(self.twins) - 200} more")
+        lines.append("The Fingerprint of such a finding names the copy by its content: it stays valid for that content only.")
         try:
             with open(self.listing, "w") as handle:
                 handle.write("\n".join(lines) + "\n")
@@ -764,10 +873,7 @@ class Export:
 
 
 def scan_staged(report, blobs, export=None):
-    entries = list(staged_entries())
-    if export is not None:
-        export.probe([path for mode, _, path in entries if mode not in ("160000", "120000")])
-    for mode, sha, path in entries:
+    for mode, sha, path in list(staged_entries()):
         if carrier_name(path):
             report.carrier(path)
         if mode == "160000":  # a submodule: no content here
@@ -775,8 +881,8 @@ def scan_staged(report, blobs, export=None):
         data = blobs.get(sha)
         if data is None:
             continue
-        if export is not None and mode != "120000":  # a symlink holds its target, not a file
-            data = export.take([path], data)
+        if export is not None:  # a symlink holds its target: that text is what gets copied
+            data = export.take(sha, [path], data)
         report.content(path, data)
 
 
@@ -837,27 +943,6 @@ def changed_files(rev_args):
             yield name.decode("utf-8", "surrogateescape"), fields[3].decode(), fields[1].decode()
 
 
-def object_kinds(ids):
-    """{object id: type} for the object ids, read with `git cat-file --batch-check`; anything else is an error."""
-    ids = sorted(ids)
-    try:
-        done = subprocess.run(["git", "cat-file", "--batch-check=%(objectname) %(objecttype)"],
-                              input="".join(f"{i}\n" for i in ids).encode(), capture_output=True)
-    except OSError as exc:
-        raise GuardError(f"cannot run git: {exc}")
-    kinds = {}
-    for line in done.stdout.split(b"\n"):
-        if not line:
-            continue
-        parts = line.split()
-        if len(parts) != 2 or not OBJECT_ID.fullmatch(parts[0]):
-            raise GuardError("unexpected output from git cat-file")
-        kinds[parts[0].decode()] = parts[1].decode()
-    if done.returncode != 0 or set(kinds) != set(ids):
-        raise GuardError("unexpected output from git cat-file")
-    return kinds
-
-
 def export_name(blob, path):
     """Where a blob of the pushed commits goes in the export: under its own id, so that two versions of a
     file do not meet and the report names the blob."""
@@ -875,22 +960,18 @@ def scan_objects(report, blobs, rev_args, where, export=None):
         for path in names:
             if carrier_name(path):
                 report.carrier(f"{path} ({where})")
-    if export is not None:
-        kinds = object_kinds(entries)
-        export.probe([export_name(sha, path) for sha, names in entries.items() if kinds[sha] == "blob"
-                      for path in (names or {"blob"})])
     for sha, names in entries.items():
         data = blobs.get(sha)
         if data is None:
             continue
         if export is not None:
-            data = export.take([export_name(sha, path) for path in sorted(names or {"blob"})], data)
+            data = export.take(sha, [export_name(sha, path) for path in sorted(names or {"blob"})], data)
         report.content(f"{sorted(names)[0] if names else '?'} [blob {sha[:10]}]", data)
 
 
 def scan_range(report, blobs, rev_args, export=None):
     for arg in rev_args:
-        if not re.fullmatch(r"\^?[0-9a-fA-F]{40}|\^?[0-9a-fA-F]{64}|--not|--remotes=\S+", arg):
+        if not re.fullmatch(r"\^?[0-9a-fA-F]{40}|\^?[0-9a-fA-F]{64}|--not|--remotes=.+", arg, re.S):  # a URL may hold spaces
             raise GuardError(f"unexpected revision argument: {show(arg)}")
     scan_objects(report, blobs, rev_args, "in the commits to push", export)
     for entry in git("log", "-z", "--format=%h%n%B", *rev_args).split(b"\0"):
@@ -942,6 +1023,8 @@ def main(argv):
         else:
             blobs = Blobs()
             scan_objects(report, blobs, ["--all"], "in history")
+        if export is not None:
+            export.finish()
     finally:
         if blobs:
             blobs.close()

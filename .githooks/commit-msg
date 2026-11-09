@@ -29,6 +29,7 @@ fi
 gitleaks=$(find_gitleaks) || gitleaks=
 tmp=$(mktemp "${TMPDIR:-/tmp}/commit-msg.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
+exit_on_signals
 status=0
 
 # --- secrets in the message ---------------------------------------------------
@@ -48,6 +49,10 @@ if [ -z "$gitleaks" ]; then
 else
   root=$(git rev-parse --show-toplevel)
   config=$(find_gitleaks_config "$root" "$hooks_dir") || config=
+  if ! gitleaks_selftest; then
+    echo "commit-msg: gitleaks does not report a token it is given: it cannot be trusted with the message." >&2
+    status=1
+  fi
   rc=0
   if [ -n "$config" ]; then
     "$gitleaks" stdin --redact --verbose --no-banner --no-color \

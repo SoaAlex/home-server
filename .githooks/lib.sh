@@ -45,13 +45,34 @@ gitleaks_has_flag() {
   "$gitleaks" dir --help 2>&1 | grep -q -e "$1"
 }
 
+# Make a signal end the hook through its EXIT trap, which removes the temporary files: dash and busybox sh do not run
+# an EXIT trap when a signal kills them. Call it after the trap on EXIT is set.
+exit_on_signals() {
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
+# Whether the gitleaks in $gitleaks reports a token on its standard input (uses $config when set). A gitleaks that
+# scans nothing (a stub, a wrapper without access to the files) exits 0 for everything, and then "no leaks found"
+# means nothing. The token is written in pieces so that no scan of this file flags it.
+gitleaks_selftest() {
+  set -- stdin --no-banner --no-color --log-level error
+  if [ -n "${config:-}" ]; then
+    set -- "$@" --config "$config"
+  fi
+  _gst_rc=0
+  printf 'token = ghp_%s%s\n' Q7xK2mV9bR4t Y8nL3cW6dF1hJ5sZ0pAe2uGv | "$gitleaks" "$@" >/dev/null 2>&1 || _gst_rc=$?
+  [ "$_gst_rc" -eq 1 ]
+}
+
 # Whether secret-guard.py --export left files to scan in the directory $1.
 export_has_files() {
   [ -d "$1/files" ] && [ -n "$(ls -A "$1/files")" ]
 }
 
 # Scan the copies that secret-guard.py --export made in the directory $1 with gitleaks, and print what it finds,
-# redacted. When it finds something, the list of the copies (a finding in _scan/<n>.txt) follows. Needs
+# redacted. When it finds something, the list of the copies (a finding in _scan/<id>.txt) follows. Needs
 # $gitleaks; uses $config and $root when they are set. Returns gitleaks' exit status. It reads the files
 # themselves: nothing here depends on how git prints a patch.
 #
