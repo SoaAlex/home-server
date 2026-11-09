@@ -6,11 +6,13 @@
 # gate before the commits become public. It runs the pre-commit checks on everything the push
 # would send, i.e. the commits the remote does not have yet:
 #
-#   1. secret-guard.py --range: file names, .env values, commit messages and the names and
-#      addresses of the author and the committer. It also copies every file the commits add
-#      or change (each version of it, under the id of its blob) into a temporary directory,
-#      with a second copy of those gitleaks would skip by name or by what they begin with or
-#      hold at a fixed place, or cannot read (see pre-commit).
+#   1. secret-guard.py --range: file names, .env values, commit messages, the names and
+#      addresses of the author and the committer, and the names of the branch or tag. A
+#      secret can be part of a path or of a ref, so the paths are given to gitleaks as small
+#      files too. It also copies every file the commits add or change (each version of it,
+#      under the id of its blob) into a temporary directory, with a second copy of those
+#      gitleaks would skip by name or by what they begin with or hold at a fixed place, or
+#      cannot read (see pre-commit).
 #   2. gitleaks over that directory, and over the commit messages and identities, configured
 #      by .gitleaks.toml; the message of an annotated tag, and of the tags it points to, is
 #      checked too. A finding is printed as <blob id>/<path>: `git log --all --oneline
@@ -66,7 +68,7 @@ scan_gitleaks_text() {
 scan_text() {
   _bad=0
   if [ -n "$python" ]; then
-    "$python" -I "$hooks_dir/secret-guard.py" --message "$1" </dev/null || _bad=1
+    "$python" -I "$hooks_dir/secret-guard.py" --message "$1" "$2" </dev/null || _bad=1
   fi
   if [ -n "$gitleaks" ]; then
     scan_gitleaks_text "$1" "$2" || _bad=1
@@ -112,6 +114,14 @@ while read -r local_ref local_oid remote_ref remote_oid; do
   failed=0
   broken=0
 
+  # The names of the branch or tag are public too, and a name that holds a secret is not printed back.
+  ref_label=$local_ref
+  printf '%s\n%s\n' "$local_ref" "$remote_ref" >"$tmp"
+  if ! scan_text "$tmp" "the name of a branch or a tag"; then
+    failed=1
+    ref_label="a ref whose name holds a secret"
+  fi
+
   if [ -n "$export_dir" ]; then
     rm -rf "$export_dir"
     export_dir=
@@ -136,7 +146,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
   while [ "$(git cat-file -t "$tag_oid" 2>/dev/null </dev/null || true)" = tag ]; do
     tag_depth=$((tag_depth + 1))
     if [ "$tag_depth" -gt 20 ]; then
-      echo "pre-push: $local_ref is a chain of more than 20 tags: not checked." >&2
+      echo "pre-push: $ref_label is a chain of more than 20 tags: not checked." >&2
       failed=1
       broken=1
       break
@@ -185,9 +195,9 @@ while read -r local_ref local_oid remote_ref remote_oid; do
 
   if [ "$failed" -ne 0 ]; then
     if [ "$broken" -ne 0 ]; then
-      echo "pre-push: a check could not run for $local_ref (see above), so it was not checked: not pushed." >&2
+      echo "pre-push: a check could not run for $ref_label (see above), so it was not checked: not pushed." >&2
     else
-      echo "pre-push: $local_ref carries a secret or an unencrypted vault: not pushed." >&2
+      echo "pre-push: $ref_label carries a secret or an unencrypted vault: not pushed." >&2
     fi
     echo "Remove it from the commits (rewrite them), and rotate it if it ever left this machine." >&2
     echo "False positive: add 'gitleaks:allow' in a comment on the line, or the finding's Fingerprint" >&2

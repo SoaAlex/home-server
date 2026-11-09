@@ -4,7 +4,8 @@
 #   1. secret-guard.py: no staged file is a secret carrier by name (.env files,
 #      Terraform state, key stores, vault password files; templates such as
 #      .env.example pass), and no staged content holds the value of a secret from a
-#      .env file. Catches secrets that have no recognizable shape. It also copies the
+#      .env file, or in the name of a staged file (the names are given to gitleaks as files
+#      too). Catches secrets that have no recognizable shape. It also copies the
 #      staged files into a temporary directory for gitleaks, and a second time, with
 #      40 000 spaces and a newline in front and under a name gitleaks reads, those it
 #      would skip: by name (lock files, images, vendored directories...), by what the
@@ -16,8 +17,9 @@
 #      printed redacted. gitleaks reads the files themselves and not `git diff
 #      --staged`, which a git setting (colors, attributes, a diff driver) or a file
 #      that git takes for binary can leave empty without any error. A staged file is
-#      scanned whole, not only its added lines. A finding in _scan/<id>.txt is in a copy
-#      of a staged file, and the list printed after the findings says which one.
+#      scanned whole, not only its added lines. A finding in _scan/<id>.txt, _scan/<id>/<name> or
+#      _scan/names/<id>.txt is in a copy of a staged file or in the name of one, and the list
+#      printed after the findings says which.
 #   3. Ansible Vault files must be encrypted
 #      (ansible/scripts/check-vault-encrypted.sh).
 #

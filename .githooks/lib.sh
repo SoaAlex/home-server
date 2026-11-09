@@ -62,10 +62,15 @@ gitleaks_selftest() {
     set -- "$@" --config "$config"
   fi
   _gst_rc=0
-  # The text begins with MZ, which gitleaks takes for a program and skips unless gitleaks_pad is in front of it:
-  # a missing dd or tr, or a gitleaks that does not read the padded text, fails this test.
+  _gst_rc2=0
+  # Three tests, so that a pad that is missing, short or wrong fails one of them. (1) The text begins with MZ, which
+  # gitleaks takes for a program and skips unless gitleaks_pad is in front of it. (2) "ustar" stands at byte 256:
+  # gitleaks reads it there, but skips the text when a pad of one byte (a lone newline) moves the mark to byte 257,
+  # so a pad that is only a newline fails. (3) The pad has its length: a missing dd or tr, or a short pad, fails.
   printf 'MZ-1 token = ghp_%s%s\n' Q7xK2mV9bR4t Y8nL3cW6dF1hJ5sZ0pAe2uGv | gitleaks_pad | "$gitleaks" "$@" >/dev/null 2>&1 || _gst_rc=$?
-  [ "$_gst_rc" -eq 1 ]
+  { printf '%0255d\n' 0; printf 'ustar\ntoken = ghp_%s%s\n' Q7xK2mV9bR4t Y8nL3cW6dF1hJ5sZ0pAe2uGv; } | gitleaks_pad | "$gitleaks" "$@" >/dev/null 2>&1 || _gst_rc2=$?
+  _gst_len=$(printf x | gitleaks_pad 2>/dev/null | wc -c 2>/dev/null | tr -d ' ') || _gst_len=0
+  [ "$_gst_rc" -eq 1 ] && [ "$_gst_rc2" -eq 1 ] && [ "${_gst_len:-0}" -ge 40002 ]
 }
 
 # gitleaks reads the text on its standard input as it reads a file: it takes the text for a program, a PDF or an archive,
