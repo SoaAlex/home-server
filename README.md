@@ -235,7 +235,9 @@ any of these checks fails:
   `SECRET_GUARD_ENV_FILES` variable lists, separated by colons. It reads staged
   files of any size, in UTF-8, UTF-16, or UTF-32. It also knows the values in
   `.env` backups and in commented-out assignments, a value with its spaces
-  removed, the secret part of a URL (the token of a webhook, of a private
+  removed, a value as docker compose writes it (every `$` doubled), as a URL
+  writes it (percent-encoded), and as a JSON or YAML string writes it
+  (escaped), the secret part of a URL (the token of a webhook, of a private
   calendar feed, or of a health-check ping), and ntfy topics. A path segment or
   query value of a URL that looks random (16 characters or more, a hash or a
   UUID) counts as a secret whatever the variable is called, so a file that
@@ -245,28 +247,42 @@ any of these checks fails:
   file. The hook gives gitleaks copies of the staged files, not the output of
   `git diff --staged`, which a git setting such as `color.ui=always` can leave
   empty without any error. gitleaks scans a file whole, not only its changed
-  lines. It skips some files without saying so, by name (lock files, images,
+  lines. It skips some files without saying so: by name (lock files, images,
   fonts, Office documents, `node_modules` and `vendor` directories, and every
-  path that contains `gitleaks.toml`) and by what the file begins with (SQLite
+  path that contains `gitleaks.toml`); by what the file begins with (SQLite
   databases, executables, archives, PDFs, Office documents, and even a text file
-  that starts with `MZ`). The hook asks gitleaks what it skips: it gives it a
-  test token in a file of each name and of each distinct start of a text file,
-  and sees which ones gitleaks reports. It then scans a second copy, with a
-  newline in front, of each file that gitleaks would not read, and of each file
-  that does not look like text. UTF-16 and UTF-32 text gets a UTF-8 copy. The
-  copy is `_scan/<id>.txt` (`_scan/deps/<id>.txt` for a lock file), named after
-  the content, so that the fingerprint gitleaks prints for a finding in it stays
-  valid for that content only. When gitleaks finds something in a copy, the hook
-  lists the file that each copy stands for; a line number in a copy is one more
-  than in the file. If gitleaks does not report the test token, because it is a
-  stub or a wrapper that cannot see the files, the hook refuses the commit
-  rather than trust it. gitleaks also opens `.zip`, `.tar`, `.gz`, `.bz2`, and
+  that starts with `MZ`) or holds at a fixed place (`ustar` at byte 257, a tar
+  archive; `DICM` at byte 128; `CD001` at byte 32769); and, for a file whose
+  first line is longer than 100 KB, from the point where a piece of that line
+  starts with such a mark. The hook asks gitleaks what it skips: it gives it a
+  test token in a file of each name, and in a copy of the first 33 KB of each
+  distinct text file, and sees which ones gitleaks reports. It then scans a
+  second copy of each file that gitleaks would not read, of each file whose first
+  line is over 100 KB, and of each file that does not look like text. That copy
+  has 40,000 spaces and a newline in front, where no mark can be found, and
+  UTF-16 and UTF-32 text becomes UTF-8. The copy is `_scan/<id>/<name>` when
+  gitleaks reads that name, because some rules depend on it (a Kubernetes Secret
+  in a `.yaml` file, a password in a `.tf` file), else `_scan/<id>.txt`, and
+  `_scan/deps/<id>.txt` for a lock file. The `<id>` comes from the content, so
+  that the fingerprint gitleaks prints for a finding in a copy stays valid for
+  that content only. When gitleaks finds something in a copy, the hook lists the
+  file that each copy stands for; a line number in a copy is one more than in
+  the file. If gitleaks does not report the test token, because it is a stub or
+  a wrapper that cannot see the files, the hook refuses the commit rather than
+  trust it. A program or a library is scanned as text like the rest, so it is
+  refused when it embeds a string that looks like a key (some libraries do, and
+  so does the `gitleaks` program): accept it by adding the fingerprint that
+  gitleaks prints to `.gitleaksignore`, because `gitleaks:allow` cannot be
+  written in a binary. gitleaks also opens `.zip`, `.tar`, `.gz`, `.bz2`, and
   `.xz` files, down to three levels. The file `.gitleaks.toml` extends the
   built-in rules with Discord webhooks, WireGuard keys, URLs that embed a
   password, and password hashes, also as docker compose writes them, with `$$`.
-  It switches off the one rule that flags hashes (`generic-api-key`) in lock
-  files such as `go.sum` and `Podfile.lock`; a token with a shape of its own is
-  still found in them.
+  It switches off the one rule that flags hashes (`generic-api-key`) in the lock
+  files that package managers write (`go.sum`, `Podfile.lock`,
+  `package-lock.json`, `yarn.lock`, `Cargo.lock`, and the others that
+  `LOCK_NAMES` lists in `.githooks/secret-guard.py`, and any name that ends in
+  `.lockfile`); a token with a shape of its own is still found in them, and a
+  file with another name, such as `secrets.lock.yaml`, keeps the rule.
 - An Ansible Vault file is not encrypted.
 
 The hooks need `python3` and `gitleaks` (tested with 8.30.1), and refuse the
@@ -294,14 +310,26 @@ The hooks lower the risk; they do not remove it. These gaps are known:
 - A file over 64 MB is not given to gitleaks; the hook says so. The `.env` values
   are still looked for in it, at any size.
 - gitleaks reads a line of more than about 125 KB without a line break in
-  pieces, and can miss a secret that straddles a cut.
+  pieces, and can miss a secret that straddles a cut. The hook scans a copy of
+  such a file with spaces in front, so that a piece which starts with a mark
+  cannot hide the rest of the file, but the straddling risk stays.
+- The `.env` values are looked for as they are written and in the spellings
+  above. A value written as base64 or hexadecimal, reversed, or cut in pieces
+  is not found.
 - UTF-16 or UTF-32 text without a byte order mark is recognized only when it is
   mostly ASCII.
 - An `.env` value, or a URL password, of fewer than eight characters is not
   tracked.
 - Text typed into a commit message below a line that looks like the diff of
-  `git commit -v` is scanned, except for lines that start like a diff line (a
-  space, `+`, `-`, or `\`).
+  `git commit -v` is scanned, except for lines that start like a diff line: a
+  space, `+`, `-`, `\`, or one of the words of a diff header (`diff --git`,
+  `index`, `@@`, `new file mode`, `deleted file mode`, `old mode`, `new mode`,
+  `similarity index`, `dissimilarity index`, `rename from`, `rename to`,
+  `copy from`, `copy to`, `Binary files`, `GIT binary patch`). Git keeps such a
+  line in the message when you did not use `-v`.
+- The `mergetag` and `gpgsig` headers of a commit are not scanned. The names and
+  addresses of the author and the committer are checked when you push, not when
+  you commit.
 - A push of a new branch does not check again the commits that a stale
   remote-tracking branch reaches, because they were public before. After you
   delete and recreate a remote, run `git fetch --prune` or delete the stale
@@ -316,6 +344,15 @@ python3 -I .githooks/secret-guard.py --history
 ```
 
 To scan the work tree instead, replace `--history` with `--tree`.
+
+`gitleaks git` has the blind spots that this section describes, because it does
+not get the copies that the hooks make. The push check does get them. To run it
+on the whole history, give it a remote name that has no branches here:
+
+```bash
+printf 'refs/heads/master %s refs/heads/master %s\n' "$(git rev-parse HEAD)" \
+  0000000000000000000000000000000000000000 | .githooks/pre-push none
+```
 
 To install gitleaks on macOS, run `brew install gitleaks`. On the NAS, install
 the release binary and check its checksum:
@@ -360,7 +397,8 @@ The `pre-push` hook runs the secret checks again on the commits that a push
 would send. Merges, rebases, cherry-picks, `git am`, and
 `git commit --no-verify` skip the commit hooks, so this hook is the last gate
 before commits become public. It checks the file names, the `.env` values, the
-commit and tag messages, and the Ansible Vault files. It also scans, with
+commit and tag messages (a tag of a tag too, up to 20 levels), and the Ansible
+Vault files. It also scans, with
 gitleaks and the same copies as `pre-commit`, every file that the commits add or
 change, in each of its versions. gitleaks names such a file `<blob id>/<path>`,
 and `git log --all --oneline --find-object=<blob id>` lists the commits that
