@@ -5,12 +5,13 @@
 #      Terraform state, key stores, vault password files; templates such as
 #      .env.example pass), and no staged content holds the value of a secret from a
 #      .env file. Catches secrets that have no recognizable shape. It also copies the
-#      staged files into a temporary directory for gitleaks, and a second time, with a
-#      newline in front and under a name gitleaks reads, those it would skip: by name
-#      (lock files, images, vendored directories...), by what the file begins with (a
-#      SQLite database, an executable, an archive, a PDF, a text file that starts with
-#      "MZ"), and those in UTF-16 or UTF-32. It asks gitleaks what it skips; a gitleaks
-#      that does not report a token it is given refuses the commit.
+#      staged files into a temporary directory for gitleaks, and a second time, with
+#      40 000 spaces and a newline in front and under a name gitleaks reads, those it
+#      would skip: by name (lock files, images, vendored directories...), by what the
+#      file begins with or holds at a fixed place (a SQLite database, an executable, an
+#      archive, a PDF, a text file that starts with "MZ"), because its first line is
+#      over 100 KB, and those in UTF-16 or UTF-32. It asks gitleaks what it skips; a
+#      gitleaks that does not report a token it is given refuses the commit.
 #   2. gitleaks scan of that directory, configured by .gitleaks.toml. Findings are
 #      printed redacted. gitleaks reads the files themselves and not `git diff
 #      --staged`, which a git setting (colors, attributes, a diff driver) or a file
@@ -21,7 +22,8 @@
 #      (ansible/scripts/check-vault-encrypted.sh).
 #
 # Every check runs, then the commit is refused if any failed. A missing python3 or
-# gitleaks refuses the commit too: an unchecked commit is not a clean one.
+# gitleaks refuses the commit too: an unchecked commit is not a clean one. What these
+# checks cannot see is listed in README.md, "What the hooks cannot see".
 #
 # False positive: put `gitleaks:allow` in a comment on the line (checks 1 and 2 both
 # honor it; `secret-guard:allow` works for check 1 only), or add the finding's

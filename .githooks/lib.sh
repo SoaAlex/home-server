@@ -62,8 +62,21 @@ gitleaks_selftest() {
     set -- "$@" --config "$config"
   fi
   _gst_rc=0
-  printf 'token = ghp_%s%s\n' Q7xK2mV9bR4t Y8nL3cW6dF1hJ5sZ0pAe2uGv | "$gitleaks" "$@" >/dev/null 2>&1 || _gst_rc=$?
+  # The text begins with MZ, which gitleaks takes for a program and skips unless gitleaks_pad is in front of it:
+  # a missing dd or tr, or a gitleaks that does not read the padded text, fails this test.
+  printf 'MZ-1 token = ghp_%s%s\n' Q7xK2mV9bR4t Y8nL3cW6dF1hJ5sZ0pAe2uGv | gitleaks_pad | "$gitleaks" "$@" >/dev/null 2>&1 || _gst_rc=$?
   [ "$_gst_rc" -eq 1 ]
+}
+
+# gitleaks reads the text on its standard input as it reads a file: it takes the text for a program, a PDF or an archive,
+# and skips all of it, when it begins like one (a message that starts with MZ-123, a ticket key) or holds "ustar" at
+# byte 257. 40 000 spaces and a newline in front of the text keep it from looking at the text that way (no mark is
+# found in spaces, and after the newline it stops looking). A line number in a finding is one more than in the text.
+# Usage: gitleaks_pad <text | gitleaks stdin ...
+gitleaks_pad() {
+  dd if=/dev/zero bs=40000 count=1 2>/dev/null | tr '\0' ' '
+  printf '\n'
+  cat
 }
 
 # Whether secret-guard.py --export left files to scan in the directory $1.

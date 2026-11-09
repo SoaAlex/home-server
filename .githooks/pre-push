@@ -6,13 +6,15 @@
 # gate before the commits become public. It runs the pre-commit checks on everything the push
 # would send, i.e. the commits the remote does not have yet:
 #
-#   1. secret-guard.py --range: file names, .env values and commit messages. It also copies
-#      every file the commits add or change (each version of it, under the id of its blob)
-#      into a temporary directory, with a second copy of those gitleaks would skip by name
-#      or by what they begin with, or cannot read (see pre-commit).
-#   2. gitleaks over that directory, and over the commit messages, configured by
-#      .gitleaks.toml; the message of an annotated tag is checked too. A finding is printed
-#      as <blob id>/<path>: `git log --all --oneline --find-object=<blob id>` names the commits.
+#   1. secret-guard.py --range: file names, .env values, commit messages and the names and
+#      addresses of the author and the committer. It also copies every file the commits add
+#      or change (each version of it, under the id of its blob) into a temporary directory,
+#      with a second copy of those gitleaks would skip by name or by what they begin with or
+#      hold at a fixed place, or cannot read (see pre-commit).
+#   2. gitleaks over that directory, and over the commit messages and identities, configured
+#      by .gitleaks.toml; the message of an annotated tag, and of the tags it points to, is
+#      checked too. A finding is printed as <blob id>/<path>: `git log --all --oneline
+#      --find-object=<blob id>` names the commits.
 #   3. Ansible Vault files must be encrypted
 #
 # Every check runs, then the push is refused if any failed. A missing python3 or gitleaks
@@ -25,8 +27,9 @@
 # Office documents, 7z, rar): a secret there is not found. Files over 64 MB are not copied for
 # gitleaks (the .env values are still checked, and the file is announced). A remote that was
 # deleted and recreated empty leaves stale remote-tracking branches here, and a push of a new
-# branch does not check the commits they reach (they were public before). README.md, Git hooks,
-# lists them all.
+# branch does not check the commits they reach (they were public before). The mergetag and
+# gpgsig headers of a commit are not scanned. README.md, "What the hooks cannot see", lists
+# them all.
 set -eu
 
 remote=${1:-origin}
@@ -48,10 +51,10 @@ is_zero() {
 scan_gitleaks_text() {
   _rc=0
   if [ -n "$config" ]; then
-    "$gitleaks" stdin --redact --verbose --no-banner --no-color --log-level warn \
-      --config "$config" <"$1" || _rc=$?
+    gitleaks_pad <"$1" | "$gitleaks" stdin --redact --verbose --no-banner --no-color --log-level warn \
+      --config "$config" || _rc=$?
   else
-    "$gitleaks" stdin --redact --verbose --no-banner --no-color --log-level warn <"$1" || _rc=$?
+    gitleaks_pad <"$1" | "$gitleaks" stdin --redact --verbose --no-banner --no-color --log-level warn || _rc=$?
   fi
   if [ "$_rc" -ne 0 ]; then
     echo "pre-push: gitleaks found a secret in $2 (exit $_rc)." >&2
@@ -127,15 +130,27 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     fi
   fi
 
-  # An annotated tag has a message that no commit carries.
-  if [ "$(git cat-file -t "$local_oid" 2>/dev/null </dev/null || true)" = tag ]; then
-    if git cat-file tag "$local_oid" >"$tmp" 2>/dev/null </dev/null; then
-      scan_text "$tmp" "the message of the tag" || failed=1
+  # An annotated tag has a message that no commit carries, and a tag can point to another tag: scan them all.
+  tag_oid=$local_oid
+  tag_depth=0
+  while [ "$(git cat-file -t "$tag_oid" 2>/dev/null </dev/null || true)" = tag ]; do
+    tag_depth=$((tag_depth + 1))
+    if [ "$tag_depth" -gt 20 ]; then
+      echo "pre-push: $local_ref is a chain of more than 20 tags: not checked." >&2
+      failed=1
+      broken=1
+      break
+    fi
+    if git cat-file tag "$tag_oid" >"$tmp" 2>/dev/null </dev/null; then
+      scan_text "$tmp" "the message of a tag" || failed=1
+      tag_oid=$(sed -n '1s/^object //p' "$tmp")
     else
       echo "pre-push: cannot read the tag." >&2
       failed=1
+      broken=1
+      break
     fi
-  fi
+  done
 
   if [ -n "$export_dir" ] && export_has_files "$export_dir"; then
     rc=0
@@ -150,8 +165,8 @@ while read -r local_ref local_oid remote_ref remote_oid; do
   fi
   if [ -n "$gitleaks" ]; then
     # gitleaks reads files, not the messages of the commits: feed it those too
-    if git log --format=%B "$@" >"$tmp" 2>/dev/null </dev/null; then
-      scan_gitleaks_text "$tmp" "a commit message" || failed=1
+    if git log --format='%an%n%ae%n%cn%n%ce%n%B' "$@" >"$tmp" 2>/dev/null </dev/null; then
+      scan_gitleaks_text "$tmp" "a commit message or the name of its author" || failed=1
     else
       echo "pre-push: cannot read the commit messages." >&2
       failed=1

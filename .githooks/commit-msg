@@ -55,11 +55,11 @@ else
   fi
   rc=0
   if [ -n "$config" ]; then
-    "$gitleaks" stdin --redact --verbose --no-banner --no-color \
-      --log-level warn --config "$config" <"$tmp" || rc=$?
+    gitleaks_pad <"$tmp" | "$gitleaks" stdin --redact --verbose --no-banner --no-color \
+      --log-level warn --config "$config" || rc=$?
   else
-    "$gitleaks" stdin --redact --verbose --no-banner --no-color \
-      --log-level warn <"$tmp" || rc=$?
+    gitleaks_pad <"$tmp" | "$gitleaks" stdin --redact --verbose --no-banner --no-color \
+      --log-level warn || rc=$?
   fi
   if [ "$rc" -ne 0 ]; then
     echo "commit-msg: gitleaks found a secret in the message (exit $rc); the commit is refused." >&2
