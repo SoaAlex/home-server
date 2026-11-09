@@ -5,16 +5,21 @@
     msgcheck.py check FILE [--no-echo]  check the subject against Conventional Commits 1.0.0:
                                         exit 0 ok, 1 not a Conventional Commit
 
-The scan text is what git keeps: the message as the file holds it, CRs removed, minus the diff that
+The scan text is what git may keep: the message as the file holds it, CRs removed, minus the diff that
 `git commit -v` appends. Comment lines stay in, because `commit.cleanup=whitespace` and
 `--cleanup=verbatim` keep them in the commit.
 
 The diff is recognised by the lines git writes around it: a comment line `-------- >8 --------` (24
 dashes on each side, exactly), then only comment lines, then `diff --git`. A line that merely looks like
 the scissors line is the author's text, and git keeps what is below it, so it is scanned: a copy with
-another prefix or with CRLF line ends, or one that is not followed by a diff. That cut is only looked for
+another prefix or with CRLF line ends, or one that is not followed by a diff. That is only looked for
 when an editor ran, because git exports GIT_EDITOR=: to the hook otherwise, and then the whole file is
 the message, whatever it contains.
+
+Below the scissors line git drops everything with -v, commit.verbose or --cleanup=scissors, and keeps it
+without them (the hook cannot tell which). So what is below is scanned too, except the lines that belong to
+a diff: those hold the staged files, which the other hooks scan, and the lines of a change that REMOVES a
+secret, which must not stop the commit. Text typed under the diff header is not diff-shaped and is scanned.
 
 The subject check ignores comment lines when an editor ran, as git does by default. With -m or -F the
 message is kept as written, so "#123 fix login" really is a subject that is not a Conventional Commit.
@@ -75,9 +80,22 @@ def scissors_at(raw_lines):
     return None
 
 
+# What git writes in a diff: a header line, or a line of the change itself (context, added, removed, a note).
+DIFF_HEADERS = (b"diff --git ", b"index ", b"@@ ", b"new file mode ", b"deleted file mode ", b"old mode ", b"new mode ",
+                b"similarity index ", b"dissimilarity index ", b"rename from ", b"rename to ", b"copy from ", b"copy to ",
+                b"Binary files ", b"GIT binary patch")
+
+
+def diff_shaped(line):
+    return line[:1] in (b" ", b"+", b"-", b"\\") or line.startswith(DIFF_HEADERS)
+
+
 def scan_text(raw_lines):
     found = scissors_at(raw_lines) if editor_ran() else None
-    kept = raw_lines if found is None else raw_lines[:found[0]]
+    if found is None:
+        kept = raw_lines
+    else:
+        kept = raw_lines[:found[0] + 1] + [line for line in raw_lines[found[0] + 1:] if not diff_shaped(line)]
     return b"\n".join(strip_cr(kept)) + b"\n"
 
 
