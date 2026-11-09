@@ -11,6 +11,20 @@ title = "home-server"
 [extend]
 useDefault = true
 
+# gitleaks skips many lock files and checksum lists (go.sum, package-lock.json, yarn.lock...) by name, because they are
+# full of hashes that look like keys, and reads others (Podfile.lock, Cargo.lock...), where the same hashes are flagged.
+# The hooks scan a copy of the skipped ones, as _scan/deps/<id>.txt, so that a real token in one is still found. This
+# switches off the one rule that fires on hashes, for lock files and for those copies only: a token with a shape of
+# its own (GitHub, AWS, a URL with a password...) is still found in them.
+[[allowlists]]
+description = "hashes in dependency lock files and in their copies"
+paths = [
+  '''^_scan_*/deps/''',
+  '''(?i)(?:^|/)[^/]*(?:\.lock(?:file)?|-lock\.(?:json|ya?ml)|\.lock\.[a-z0-9]+)$''',
+  '''(?i)(?:^|/)(?:go\.(?:sum|work\.sum)|npm-shrinkwrap\.json|package\.resolved)$''',
+]
+targetRules = ["generic-api-key"]
+
 [[rules]]
 id = "discord-webhook-url"
 description = "Discord webhook URL (the token is part of the path)"
