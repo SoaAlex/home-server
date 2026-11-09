@@ -287,6 +287,10 @@ The hooks lower the risk; they do not remove it. These gaps are known:
 - A secret inside a compressed file other than `.zip`, `.tar`, `.gz`, `.bz2`, or
   `.xz`: a `.tgz`, an Office document, a `7z` or a `rar`. A file inside an
   archive nested more than three levels deep is skipped, with a warning.
+- gitleaks ignores a secret that contains `false`, starts with `true`, or ends
+  with `null`, in any case, because of an exception in its default
+  configuration. A password such as `NotFalse2024` in a URL is not found. The
+  `.env` values are not affected.
 - A file over 64 MB is not given to gitleaks; the hook says so. The `.env` values
   are still looked for in it, at any size.
 - gitleaks reads a line of more than about 125 KB without a line break in
