@@ -14,8 +14,23 @@ useDefault = true
 [[rules]]
 id = "discord-webhook-url"
 description = "Discord webhook URL (the token is part of the path)"
-regex = '''(?i)https?://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/(?:v\d+/)?webhooks/\d{17,20}/[A-Za-z0-9_-]{40,}'''
+regex = '''(?i)(?:https?://)?(?:ptb\.|canary\.)?discord(?:app)?\.com/api/(?:v\d+/)?webhooks/\d{17,20}/([A-Za-z0-9_-]{30,})'''
+secretGroup = 1
+entropy = 3.0
 keywords = ["webhooks"]
+
+[[rules.allowlists]]
+description = "documentation placeholders: an id made of one repeated digit, or 123456789..."
+regexTarget = "match"
+regexes = [
+  '''webhooks/(?:0{17,20}|1{17,20}|2{17,20}|3{17,20}|4{17,20}|5{17,20}|6{17,20}|7{17,20}|8{17,20}|9{17,20})/''',
+  '''webhooks/123456789\d{8,11}/''',
+]
+
+[[rules.allowlists]]
+description = "documentation placeholders: a token that is a sentence (YOUR_WEBHOOK_TOKEN, EXAMPLE-TOKEN, ...)"
+regexTarget = "secret"
+regexes = ['''(?i)^(?:your|my|example|sample|placeholder|dummy|fake|test|changeme|token|webhook)[_-]''']
 
 [[rules]]
 id = "wireguard-key"
@@ -30,23 +45,26 @@ id = "url-credentials"
 description = "Password embedded in a URL (scheme://user:password@host)"
 regex = '''(?i)\b[a-z][a-z0-9+.-]{1,20}://[^\s:/@"'<>]{0,64}:([^\s@/"'<>]{8,})@[a-z0-9][^\s/"'<>]*'''
 secretGroup = 1
-entropy = 3.0
+entropy = 2.5
 keywords = ["://"]
 
 [[rules.allowlists]]
-description = "placeholders and variable references: the whole password is the placeholder"
+description = "placeholders and variable references: the WHOLE password has to be one"
 regexTarget = "secret"
 regexes = [
   '''(?i)^(?:password|passwd|passw0rd|secret|changeme|change-me|changeit|yourpass(?:word)?|your[-_]password|userpass|dbpassword|x{4,}|\*{3,}|\.{3,})$''',
-  '''^\$\{?[A-Za-z_]''',
-  '''^\{\{''',
-  '''^%[A-Za-z_]''',
+  '''^\$[A-Za-z_][A-Za-z0-9_]*$''',
+  '''^\$\{[A-Za-z_][A-Za-z0-9_]*(?::?[-+?=][^}]*)?\}$''',
+  '''^\{\{.*\}\}$''',
+  '''^%[A-Za-z_][A-Za-z0-9_]*%$''',
   '''^<[^>]*>$''',
   '''^\{FRIGATE_[A-Za-z0-9_]+\}$''',
 ]
 
+# In a docker-compose file every literal $ is written $$, so each "$" of a hash prefix may be doubled.
 [[rules]]
 id = "password-hash"
-description = "Password hash: bcrypt, Argon2, Balloon, PBKDF2 (any case, Django too), scrypt, yescrypt, SHA-crypt, MD5-crypt, Apache apr1, phpass, htpasswd {SHA}"
-regex = '''(?i)(?:\$2[aby]\$\d{2}\$[./a-z0-9]{50,}|\$argon2(?:id|i|d)\$[^\s"']{20,}|\$balloon-[a-z0-9]+\$[^\s"']{20,}|\$pbkdf2(?:-[a-z0-9]+)?\$[^\s"']{20,}|\$scrypt\$[^\s"']{20,}|\$(?:1|5|6|apr1)\$(?:[a-z0-9,=]+\$)?[./a-z0-9]{1,16}\$[./a-z0-9]{20,}|\$y\$[./a-z0-9]+\$[./a-z0-9]{1,24}\$[./a-z0-9]{20,}|\$7\$[./a-z0-9]{10,}\$[./a-z0-9]{20,}|\$[ph]\$[./a-z0-9]{30,}|\bpbkdf2_sha(?:1|256|512)\$\d+\$[a-z0-9+/=]+\$[a-z0-9+/=]{20,}|\{s?sha(?:1|256|512)?\}[a-z0-9+/]{27,}={0,2})'''
-keywords = ["$balloon", "$argon2", "$pbkdf2", "pbkdf2_", "$scrypt", "$2a$", "$2b$", "$2y$", "$1$", "$5$", "$6$", "$7$", "$y$", "$apr1$", "$p$", "$h$", "{sha", "{ssha"]
+description = "Password hash (random-looking: a documentation placeholder such as $6$saltsalt$xxxx is skipped): bcrypt, Argon2, Balloon, PBKDF2 (any case, Django too), scrypt, yescrypt, SHA-crypt, MD5-crypt, Apache apr1, phpass, htpasswd {SHA} and {MD5}, Postgres SCRAM, Django md5$ and sha1$"
+regex = '''(?i)(?:\${1,2}2[aby]\${1,2}\d{2}\${1,2}[./a-z0-9]{50,}|\${1,2}argon2(?:id|i|d)\${1,2}[^\s"']{20,}|\${1,2}balloon-[a-z0-9]+\${1,2}[^\s"']{20,}|\${1,2}pbkdf2(?:-[a-z0-9]+)?\${1,2}[^\s"']{20,}|\${1,2}scrypt\${1,2}[^\s"']{20,}|\${1,2}(?:1|5|6|apr1)\${1,2}(?:[a-z0-9,=]+\${1,2})?[./a-z0-9]{1,16}\${1,2}[./a-z0-9]{20,}|\${1,2}y\${1,2}[./a-z0-9]+\${1,2}[./a-z0-9]{1,24}\${1,2}[./a-z0-9]{20,}|\${1,2}7\${1,2}[./a-z0-9]{10,}\${1,2}[./a-z0-9]{20,}|\${1,2}[ph]\${1,2}[./a-z0-9]{30,}|\bpbkdf2_sha(?:1|256|512)\${1,2}\d+\${1,2}[a-z0-9+/=]+\${1,2}[a-z0-9+/=]{20,}|\bscrypt\${1,2}\d+\${1,2}[a-z0-9+/=]+\${1,2}\d+\${1,2}\d+\${1,2}[a-z0-9+/=]{20,}|\b(?:md5|sha1)\${1,2}[a-z0-9]{1,22}\${1,2}[0-9a-f]{32,40}\b|\bSCRAM-SHA-256\${1,2}\d+:[a-z0-9+/=]{16,}\${1,2}[a-z0-9+/=]{20,}:[a-z0-9+/=]{20,}|\{s?sha(?:1|256|512)?\}[a-z0-9+/]{27,}={0,2}|\{s?md5\}[a-z0-9+/]{22,}={0,2})'''
+entropy = 3.0
+keywords = ["$balloon", "$argon2", "$pbkdf2", "pbkdf2_", "$scrypt", "scrypt$", "$2a$", "$2b$", "$2y$", "$1$", "$5$", "$6$", "$7$", "$y$", "$apr1$", "$p$", "$h$", "{sha", "{ssha", "{md5}", "{smd5}", "md5$", "sha1$", "scram-sha-256"]
