@@ -4,9 +4,16 @@
 #   1. secret-guard.py: no staged file is a secret carrier by name (.env files,
 #      Terraform state, key stores, vault password files; templates such as
 #      .env.example pass), and no staged content holds the value of a secret from a
-#      git-ignored .env file. Catches secrets that have no recognizable shape.
-#   2. gitleaks scan of the staged diff (added lines only), configured by
-#      .gitleaks.toml. Findings are printed redacted.
+#      .env file. Catches secrets that have no recognizable shape. It also copies the
+#      staged files into a temporary directory for gitleaks, and a second time, under
+#      a name gitleaks reads, those it would skip by name (lock files, images,
+#      vendored directories...) and those in UTF-16 or UTF-32.
+#   2. gitleaks scan of that directory, configured by .gitleaks.toml. Findings are
+#      printed redacted. gitleaks reads the files themselves and not `git diff
+#      --staged`, which a git setting (colors, attributes, a diff driver) or a file
+#      that git takes for binary can leave empty without any error. A staged file is
+#      scanned whole, not only its added lines. A finding in _scan/<n>.txt is in a copy
+#      of a staged file, and the list printed after the findings says which one.
 #   3. Ansible Vault files must be encrypted
 #      (ansible/scripts/check-vault-encrypted.sh).
 #
@@ -15,9 +22,10 @@
 #
 # False positive: put `gitleaks:allow` in a comment on the line (checks 1 and 2 both
 # honor it; `secret-guard:allow` works for check 1 only), or add the finding's
-# fingerprint to .gitleaksignore. `git commit --no-verify` skips this hook; the
-# repository is public, so do not use it without the owner's approval. pre-push runs
-# the same checks again on everything a push would send.
+# fingerprint (file:rule:line, printed by gitleaks) to .gitleaksignore. `git commit
+# --no-verify` skips this hook; the repository is public, so do not use it without
+# the owner's approval. pre-push runs the same checks again on everything a push
+# would send.
 set -eu
 
 hooks_dir=$(cd "$(dirname "$0")" && pwd)
@@ -25,18 +33,17 @@ hooks_dir=$(cd "$(dirname "$0")" && pwd)
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 status=0
+export_dir=
+trap 'if [ -n "$export_dir" ]; then rm -rf "$export_dir"; fi' EXIT
 
-# --- 1. file names and .env values ------------------------------------------
 python=$(find_python) || python=
+gitleaks=$(find_gitleaks) || gitleaks=
+config=$(find_gitleaks_config "$root" "$hooks_dir") || config=
+
 if [ -z "$python" ]; then
   echo "pre-commit: python3 not found, so file names and .env values cannot be checked." >&2
   status=1
-elif ! "$python" -I "$hooks_dir/secret-guard.py" --staged; then
-  status=1
 fi
-
-# --- 2. gitleaks scan of the staged diff ------------------------------------
-gitleaks=$(find_gitleaks) || gitleaks=
 if [ -z "$gitleaks" ]; then
   {
     echo "pre-commit: gitleaks not found, so the staged changes cannot be scanned."
@@ -44,17 +51,24 @@ if [ -z "$gitleaks" ]; then
     echo "or point GITLEAKS_BIN at the binary."
   } >&2
   status=1
-else
-  config=$(find_gitleaks_config "$root" "$hooks_dir") || config=
-  rc=0
-  if [ -n "$config" ]; then
-    "$gitleaks" git --pre-commit --staged --redact --verbose --no-banner --no-color \
-      --log-level warn --config "$config" || rc=$?
-  else
-    echo "pre-commit: warning: .gitleaks.toml not found, using gitleaks' built-in rules only." >&2
-    "$gitleaks" git --pre-commit --staged --redact --verbose --no-banner --no-color \
-      --log-level warn || rc=$?
+elif [ -z "$config" ]; then
+  echo "pre-commit: warning: .gitleaks.toml not found, using gitleaks' built-in rules only." >&2
+fi
+
+# --- 1. file names and .env values, and the copies for gitleaks ---------------
+if [ -n "$python" ]; then
+  if [ -n "$gitleaks" ]; then
+    export_dir=$(mktemp -d "${TMPDIR:-/tmp}/pre-commit.XXXXXX")
   fi
+  if ! run_secret_guard --staged; then
+    status=1
+  fi
+fi
+
+# --- 2. gitleaks scan of the copies -----------------------------------------
+if [ -n "$export_dir" ] && export_has_files "$export_dir"; then
+  rc=0
+  gitleaks_scan_dir "$export_dir" || rc=$?
   if [ "$rc" -ne 0 ]; then
     {
       echo

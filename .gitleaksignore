@@ -1,8 +1,14 @@
-# Findings reviewed and accepted. One fingerprint per line, as gitleaks prints it
-# (commit:file:rule:line). Add a line only after the secret is rotated or proven fake,
-# and say why in a comment.
+# Findings reviewed and accepted. One fingerprint per line, as gitleaks prints it:
+# commit:file:rule:line for a scan of the history (gitleaks git), file:rule:line for the
+# files of a commit (pre-commit), and <first 12 characters of the blob id>/file:rule:line
+# for the files of a push (pre-push). Add a line only after the secret is rotated or
+# proven fake, and say why in a comment.
 #
 # PTZ_API_TOKEN, rotated on 2026-10-28: the value in these two commits is dead.
 # One is in the public history; the other is a local agent checkpoint (refs/agents/...).
 2de7f2e526b415a20a696883d7c4d5e9158c66b6:home-server/ptz-preset/homeassistant.yaml:generic-api-key:22
 e0506aad7f7c477b7e0b04962439835566a062cd:home-server/ptz-preset/homeassistant.yaml:generic-api-key:22
+#
+# The same value as pre-push sees it: pre-push scans the files of the commits it sends, and names a finding
+# <first 12 characters of the blob id>/<file>:rule:line. This is the blob of the first commit above.
+50b78281c18a/home-server/ptz-preset/homeassistant.yaml:generic-api-key:22

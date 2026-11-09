@@ -228,17 +228,35 @@ any of these checks fails:
 
 - A staged file is an `.env` file, a key store, Terraform state, or a vault
   password file. Templates such as `.env.example` pass.
-- A staged file contains the value of a secret from an `.env` file on the
-  machine. This catches secrets that have no recognizable shape, such as a
-  random path prefix. The check reads files of any size and encoding, and it
-  also knows the values in `.env` backups and in commented-out assignments.
-- [gitleaks](https://github.com/gitleaks/gitleaks) finds a secret. The file
-  `.gitleaks.toml` extends its built-in rules with Discord webhooks, WireGuard
-  keys, URLs that embed a password, and password hashes.
+- A staged file contains the value of a secret from an `.env` file. This
+  catches secrets that have no recognizable shape, such as a random path
+  prefix. The check reads the `.env` files of the work tree (tracked or not,
+  ignored or not), `~/.hermes/.env`, and the files that the
+  `SECRET_GUARD_ENV_FILES` variable lists, separated by colons. It reads staged
+  files of any size, in UTF-8, UTF-16, or UTF-32. It also knows the values in
+  `.env` backups and in commented-out assignments, a value with its spaces
+  removed, the secret part of a URL (the token of a webhook, of a private
+  calendar feed, or of a health-check ping), and ntfy topics.
+- [gitleaks](https://github.com/gitleaks/gitleaks) finds a secret in a staged
+  file. The hook gives gitleaks copies of the staged files, not the output of
+  `git diff --staged`, which a git setting such as `color.ui=always` can leave
+  empty without any error. gitleaks scans a file whole, not only its changed
+  lines. It skips some files by name without saying so: lock files, images,
+  fonts, Office documents, `node_modules` and `vendor` directories, and every
+  path that contains `gitleaks.toml`. The hook asks gitleaks which names it
+  skips, and scans a second copy of each file with such a name, as
+  `_scan/<n>.txt`, and a UTF-8 copy of UTF-16 and UTF-32 text. When gitleaks
+  finds something in a copy, the hook lists the file that each copy stands for.
+  gitleaks also opens `.zip`, `.tar`, `.gz`, `.bz2`, and `.xz` files. Neither
+  check looks inside other compressed files, such as `.tgz` or Office
+  documents, and gitleaks skips a file that starts with the signature of an
+  archive or of a PDF, whatever its name. The file `.gitleaks.toml` extends the
+  built-in rules with Discord webhooks, WireGuard keys, URLs that embed a
+  password, and password hashes, also as docker compose writes them, with `$$`.
 - An Ansible Vault file is not encrypted.
 
-The hooks need `python3` and `gitleaks`, and refuse the commit when either is
-missing. The hook never prints a secret, only the file, the line, and the rule.
+The hooks need `python3` and `gitleaks` (tested with 8.30.1), and refuse the
+commit when either is missing. The hook never prints a secret, only the file, the line, and the rule.
 All checks run before the commit is refused, so one attempt lists every
 problem. If a finding is a false positive, add a `gitleaks:allow` comment on
 the line. Both checks honor it. For gitleaks, you can also add the fingerprint
@@ -298,10 +316,14 @@ The `pre-push` hook runs the secret checks again on the commits that a push
 would send. Merges, rebases, cherry-picks, `git am`, and
 `git commit --no-verify` skip the commit hooks, so this hook is the last gate
 before commits become public. It checks the file names, the `.env` values, the
-commit messages, the patches with gitleaks, and the Ansible Vault files. When
-it finds a problem, rewrite the commits before you push, and rotate any secret
-that left your machine. Skip the hook with `git push --no-verify` only with the
-owner's approval, because this repository is public.
+commit and tag messages, and the Ansible Vault files. It also scans, with
+gitleaks and the same copies as `pre-commit`, every file that the commits add or
+change, in each of its versions. gitleaks names such a file `<blob id>/<path>`,
+and `git log --all --oneline --find-object=<blob id>` lists the commits that
+hold it. When the hook finds a problem, rewrite the commits before you push, and
+rotate any secret that left your machine. Skip the hook with
+`git push --no-verify` only with the owner's approval, because this repository
+is public.
 
 ## Start the stacks
 
