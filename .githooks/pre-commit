@@ -8,7 +8,8 @@
 #      too). Catches secrets that have no recognizable shape. It also copies the
 #      staged files into a temporary directory for gitleaks, and a second time, with
 #      40 000 spaces and a newline in front and under each name gitleaks reads (one copy
-#      for each different name of the file, up to 64; a file with more is refused), those it
+#      for each different name of the file, up to 1000 names and 512 MB of copies in all;
+#      a file with more is refused), those it
 #      would skip: by name (lock files, images, vendored directories...), by what the
 #      file begins with or holds at a fixed place (a SQLite database, an executable, an
 #      archive, a PDF, a text file that starts with "MZ"), because its first line is
@@ -20,7 +21,7 @@
 #      that git takes for binary can leave empty without any error. A staged file is
 #      scanned whole, not only its added lines. A finding in _scan/<id>.txt, _scan/<id>/<name> or
 #      _scan/names/<id>.txt is in a copy of a staged file or in the name of one, and the list
-#      printed after the findings says which.
+#      printed after the findings says which copy it is, and which names had something hidden in them.
 #   3. Ansible Vault files must be encrypted
 #      (ansible/scripts/check-vault-encrypted.sh).
 #

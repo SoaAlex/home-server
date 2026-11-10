@@ -41,7 +41,7 @@ case "$mode" in
       while IFS= read -r -d '' path; do
         [[ "$path" =~ $pattern ]] || continue
         check_blob "$path (commit ${commit:0:7})" < <(git show "$commit:$path")
-      done < <(git diff-tree --no-commit-id --name-only -r -z --diff-filter=ACMR "$commit")
+      done < <(git diff-tree --root -m --no-commit-id --name-only -r -z --diff-filter=ACMR "$commit")   # a root commit and a merge too
     done < <(git rev-list "$range")
     ;;
   --tree)
