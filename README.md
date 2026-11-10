@@ -266,11 +266,12 @@ any of these checks fails:
   gitleaks reads that name, because some rules depend on it (a Kubernetes Secret
   in a `.yaml` file, a password in a `.tf` file or in a `nuget.config`). Those
   rules look at the end of the name, so a name of more than 100 bytes keeps its
-  last 100. A file that has several names gets one copy for each different name,
-  up to 64; the hook refuses a file with more names, because it cannot ask
-  gitleaks about each of them. The copy is `_scan/<id>.txt` when gitleaks reads
-  none of the names, and `_scan/deps/<id>.txt` for a lock file. The `<id>` comes
-  from the content, so
+  last 100. A file that needs a copy and has several names gets one copy for each
+  different name that gitleaks reads, up to 1,000 names and 512 MB of copies in
+  all; the hook refuses a file with more, because it cannot ask gitleaks about
+  each of them. The copy is `_scan/<id>.txt` when gitleaks reads none of the
+  names, and `_scan/deps/<id>.txt` for a lock file. The `<id>` comes from the
+  content, so
   that the fingerprint gitleaks prints for a finding in a copy stays valid for
   that content only. When gitleaks finds something in a copy, the hook lists the
   file that each copy stands for; a line number in a copy is one more than in
@@ -283,8 +284,16 @@ any of these checks fails:
   values in each path, and gives gitleaks each path as a small file called
   `_scan/names/<id>.txt`, where `<id>` comes from the path. A finding there is in
   the name of a file of the change (a submodule included), and only the
-  fingerprint can accept it, because `gitleaks:allow` cannot be written in a
-  name. The hook does not check the names of the files that a commit deletes,
+  fingerprint can accept it: a name has no comment, so the text `gitleaks:allow`
+  or `secret-guard:allow` in a name is read as if it were not there. The list that
+  the hook prints after the findings gives the names that had something hidden
+  in them; this command lists the ids of all the names of a commit:
+
+  ```bash
+  git diff --cached --name-only -z | python3 -c "import sys,hashlib; [print(hashlib.sha1(p).hexdigest()[:12], p.decode(errors='replace')) for p in sys.stdin.buffer.read().split(b'\0') if p]"
+  ```
+
+  The hook does not check the names of the files that a commit deletes,
   nor the old names of renamed files: removing them is the fix. A program or a library is scanned as text like the rest, so it is
   refused when it embeds a string that looks like a key (some libraries do, and
   so does the `gitleaks` program): accept it by adding the fingerprint that
@@ -299,14 +308,19 @@ any of these checks fails:
   `LOCK_NAMES` lists in `.githooks/secret-guard.py`, and any name that ends in
   `.lockfile`); a token with a shape of its own is still found in them, and a
   file with another name, such as `secrets.lock.yaml`, keeps the rule.
-- An Ansible Vault file is not encrypted.
+- An Ansible Vault file is not encrypted. The files checked are those called
+  `*vault*.yml` or `*vault*.yaml` under a `group_vars/` or `host_vars/`
+  directory; a vault file with another name is not looked at. The push check
+  reads every commit it sends, root commits and merges included.
 
 The hooks need `python3` and `gitleaks` (tested with 8.30.1), and refuse the
 commit when either is missing. The hooks print paths, line numbers, variable
 names, and rules, never a value. A path can hold a secret too, so in the paths
 that the hooks print they replace the value of a `.env` variable with `<secret>`
 and any run of 20 or more letters, digits, and underscores that has both letters
-and digits, a token whatever its kind, with `<hidden>`. The exception is
+and digits, a long identifier or a token, with `<hidden>`. A token that has
+hyphens, or only letters, or fewer than 20 characters, is printed as it is. The
+exception is
 gitleaks: it prints the name of a file that it flags or cannot read, and the
 fingerprint of the finding, so a secret in the name of a file that gitleaks also
 refuses for its content is shown. The list of copies gives the start of the object id of each
@@ -335,7 +349,10 @@ The hooks lower the risk; they do not remove it. These gaps are known:
   take for a placeholder: a secret that is entirely a variable reference
   (`$NAME`, `${NAME}`, `{{ name }}`, `%NAME%`), one repeated letter, or a path
   such as `/home/...` is ignored, and the generic rule also ignores a value made
-  only of letters, `_`, `.` and `-`, or one that contains a common word.
+  only of letters, `_`, `.` and `-`, or one that contains a common word. A few
+  rules also skip some paths: GitHub tokens in `@octokit/auth-token/README.md`,
+  and the generic rule on the `LICENSE`, `LIC_FILES_CHKSUM` and `SRC` lines of
+  BitBake files (`.bb`, `.bbappend`, `.bbclass`, `.inc`).
 - A file over 64 MB is not given to gitleaks; the hook says so. The `.env` values
   are still looked for in it, at any size.
 - gitleaks reads a line of more than about 125 KB without a line break in
@@ -369,9 +386,10 @@ The hooks lower the risk; they do not remove it. These gaps are known:
   delete and recreate a remote, run `git fetch --prune` or delete the stale
   branches (`git branch -dr origin/<name>`) before the first push.
 - `git commit --no-verify` and `git push --no-verify` skip the hooks.
-- A clone or a linked worktree whose checked-out commit has no `.githooks/`
-  directory (an old branch) runs no hook at all, because `core.hooksPath` is
-  relative. Turn the hooks on again after you check out a commit that has them.
+- A linked worktree, or a checkout of an old commit, that has no `.githooks/`
+  directory runs no hook at all, because `core.hooksPath` is relative to the
+  checkout. A fresh clone does not inherit `core.hooksPath`: run the `git config`
+  command above in each clone.
 
 To scan everything that is already committed, run:
 
