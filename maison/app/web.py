@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import json
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -103,16 +103,28 @@ SUMMARY_COLS = ("id, source, url, title, price, surface_m2, land_m2, rooms, bedr
                 "first_seen, last_seen, merged_into, geo_precision, lat, lon, dpe")
 
 
-def _summary(row: dict) -> dict:
+def _summary(row: dict, max_photos: int = 4, review: bool = False) -> dict:
+    """Résumé d'un bien (valeurs des cartes : groupe fusionné, corrections de l'agent). `review` ajoute les champs du
+    tableau comparatif de l'onglet « Doublons » : offres avec liens, première vue du bien, activité, code postal."""
     eff = effective(row)
     cl = row.get("cluster") or {}
     pics = cl.get("photos") or ([f"/photos/{p}" for p in row["photos"]] if row["photos"] else row["photo_urls"] or [])
-    return {"id": row["id"], "source": row["source"], "url": row["url"], "title": eff.get("title"),
-            "price": eff.get("price"), "surface_m2": eff.get("surface_m2"), "land_m2": eff.get("land_m2"),
-            "rooms": eff.get("rooms"), "bedrooms": eff.get("bedrooms"), "city": eff.get("city"),
-            "address": eff.get("address"), "agency": row["agency"], "status": row["status"], "score": row["score"],
-            "excluded_reason": row["excluded_reason"], "reaction": row["reaction"], "dpe": eff.get("dpe"),
-            "sources": cl.get("sources") or [row["source"]], "photos": pics[:4]}
+    out = {"id": row["id"], "source": row["source"], "url": row["url"], "title": eff.get("title"),
+           "price": eff.get("price"), "surface_m2": eff.get("surface_m2"), "land_m2": eff.get("land_m2"),
+           "rooms": eff.get("rooms"), "bedrooms": eff.get("bedrooms"), "city": eff.get("city"),
+           "address": eff.get("address"), "agency": row["agency"], "status": row["status"], "score": row["score"],
+           "excluded_reason": row["excluded_reason"], "reaction": row["reaction"], "dpe": eff.get("dpe"),
+           "sources": cl.get("sources") or [row["source"]], "photos": pics[:max_photos]}
+    if review:
+        offers = cl.get("offers") or [{"id": row["id"], "source": row["source"], "agency": row["agency"],
+                                       "url": row["url"], "price": row["price"],
+                                       "status": "active" if row["status"] == "active" else "gone"}]
+        seen = [o.get("first_seen") for o in cl.get("offers") or [] if o.get("first_seen")]
+        out.update(postal_code=eff.get("postal_code"),
+                   first_seen=min(seen) if seen else row["first_seen"],
+                   active=row["status"] == "active" or bool(cl.get("active")),
+                   offers=[{k: o.get(k) for k in ("id", "source", "agency", "url", "price", "status")} for o in offers])
+    return out
 
 
 def _suggestions(conn, group: list[int]) -> list[dict]:
@@ -201,6 +213,89 @@ def not_duplicate(lid: int, body: dict):
         except LookupError:
             raise HTTPException(404)
     return {"ok": True}
+
+
+# ---------- onglet « Doublons » (spec duplicate-review) ----------
+REVIEW_PHOTOS = 6
+
+
+def _visible(s: dict) -> bool:
+    """Côté qui compte pour le périmètre par défaut : bien actif et non exclu (« à compléter » n'exclut pas)."""
+    return s["active"] and s["excluded_reason"] in (None, "à compléter")
+
+
+@app.get("/api/duplicates")
+def duplicates(include_all: int = Query(0, alias="all")):
+    """File de revue : un couple de biens (annonces principales) par entrée, preuves de la meilleure paire sous-jacente
+    (plus de photos communes, puis la plus récente), triée par meilleur score puis détection la plus ancienne.
+    Par défaut, seuls les couples dont au moins un côté est actif et non exclu (`visible`) ; `all=1` les garde tous.
+    `hidden` = nombre de couples hors de ce périmètre."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT p.id_a, p.id_b, p.evidence, p.created_at, "
+            "least(coalesce(a.merged_into, a.id), coalesce(b.merged_into, b.id)) AS x, "
+            "greatest(coalesce(a.merged_into, a.id), coalesce(b.merged_into, b.id)) AS y "
+            "FROM duplicate_pair p JOIN listing a ON a.id = p.id_a JOIN listing b ON b.id = p.id_b "
+            "WHERE p.status = 'suggested'").fetchall()
+        couples: dict[tuple, dict] = {}
+        for r in rows:
+            if r["x"] == r["y"]:            # couple devenu interne à un bien (fusion faite depuis)
+                continue
+            ev = r["evidence"] or {}
+            c = couples.setdefault((r["x"], r["y"]), {"n": 0, "first": r["created_at"], "best": None})
+            c["n"] += 1
+            c["first"] = min(c["first"], r["created_at"])
+            rank = (ev.get("photos") or 0, r["created_at"])
+            if c["best"] is None or rank > c["best"][0]:
+                c["best"] = (rank, r)
+        ids = sorted({i for k in couples for i in k})
+        sums = {r["id"]: _summary(r, REVIEW_PHOTOS, review=True) for r in conn.execute(
+            f"SELECT {SUMMARY_COLS} FROM listing WHERE id = ANY(%s)", (ids,))} if ids else {}
+    out, hidden = [], 0
+    for (x, y), c in couples.items():
+        if x not in sums or y not in sums:
+            continue
+        a, b = sums[x], sums[y]
+        visible = _visible(a) or _visible(b)
+        if not visible:
+            hidden += 1                     # compté même avec all=1 : l'UI en déduit le nombre de l'onglet
+            if not include_all:
+                continue
+        best = c["best"][1]
+        out.append({"key": f"{x}-{y}", "a": a, "b": b, "evidence": best["evidence"] or {}, "visible": visible,
+                    "pair": [best["id_a"], best["id_b"]], "pairs": c["n"], "created_at": c["first"]})
+    scores = lambda e: [s for s in (e["a"]["score"], e["b"]["score"]) if s is not None]
+    out.sort(key=lambda e: (not scores(e), -max(scores(e), default=0), e["created_at"], e["key"]))
+    return {"pairs": out, "hidden": hidden}
+
+
+@app.post("/api/duplicates/decision")
+def duplicate_decision(body: dict):
+    """Décision de l'onglet « Doublons » sur un couple : fusion manuelle ou refus. Refusée (409) quand il ne reste
+    aucun doublon possible en attente entre les deux biens (fusionnés, refusés ou séparés entre-temps)."""
+    a, b, action = body.get("a"), body.get("b"), body.get("action")
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (a, b)) or a == b \
+            or action not in ("merge", "reject"):
+        raise HTTPException(400, "a, b = identifiants de deux annonces ; action = merge | reject")
+    with db.connect() as conn:
+        dedupe._lock(conn)                  # même verrou que le collecteur : l'état lu ne bouge plus jusqu'au commit
+        try:
+            pa, pb = dedupe.principal_of(conn, a), dedupe.principal_of(conn, b)
+        except LookupError:
+            raise HTTPException(404, "introuvable")
+        if pa == pb:
+            raise HTTPException(409, "déjà traité")
+        ga, gb = dedupe.group_ids(conn, pa), dedupe.group_ids(conn, pb)
+        if not conn.execute("SELECT 1 FROM duplicate_pair WHERE status = 'suggested' AND "
+                            "((id_a = ANY(%s) AND id_b = ANY(%s)) OR (id_a = ANY(%s) AND id_b = ANY(%s))) LIMIT 1",
+                            (ga, gb, gb, ga)).fetchone():
+            raise HTTPException(409, "déjà traité")
+        if action == "reject":
+            dedupe.reject(conn, pa, pb)
+            return {"action": action, "principal": None}
+        keep = dedupe.merge(conn, pa, pb, method="user")
+        _rescore(conn, [keep])
+    return {"action": action, "principal": keep}
 
 
 @app.post("/api/listings/{lid}/user")

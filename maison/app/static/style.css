@@ -20,7 +20,7 @@ a { color: var(--accent); }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 17px; color: var(--text); text-decoration: none; }
 .logo { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 18px; }
 .tabs { display: flex; gap: 4px; background: var(--panel-2); padding: 3px; border-radius: 10px; }
-.tabs a { padding: 5px 14px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 500; }
+.tabs a { padding: 5px 14px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 500; white-space: nowrap; }
 .tabs a.active { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
 .search { flex: 1; max-width: 420px; }
 .search input { width: 100%; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel-2); outline: none; }
@@ -234,4 +234,63 @@ main.maponly #list { display: none; }
   .topbar { gap: 6px; padding: 8px; }
   .d-body { grid-template-columns: 1fr; }
   #list { padding: 12px; }
+}
+
+/* ---------- onglet Doublons (revue rapide des doublons possibles) ---------- */
+#dups { display: none; overflow-y: auto; padding: 18px; }
+main.dupsonly { grid-template-columns: minmax(0, 1fr); }
+main.dupsonly #list, main.dupsonly #map { display: none; }
+main.dupsonly #dups { display: block; }
+.dup-head { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; max-width: 1200px; margin: 0 auto 12px; }
+.dup-head label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
+.dup-pos { font-weight: 700; margin-right: auto; }
+.dup-review { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+.dup-ev { font-size: 13px; }
+.dup-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.dup-side { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.dup-side-head { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.dup-side-head .score { flex: none; }
+.dup-side-title { min-width: 0; }
+.dup-side-title b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dup-photos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.dup-photos img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; display: block; background: var(--panel-2); }
+.dup-photos .nophoto { grid-column: 1 / -1; display: grid; place-items: center; height: 120px; color: var(--muted); font-size: 34px; background: var(--panel-2); border-radius: 8px; }
+.dup-links { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: 13px; }
+.dup-links a.gone { color: var(--muted); }
+.dup-cmp { width: 100%; border-collapse: separate; border-spacing: 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; font-size: 13.5px; table-layout: fixed; }
+.dup-cmp th, .dup-cmp td { padding: 6px 10px; border-top: 1px solid var(--border); text-align: left; overflow-wrap: anywhere; }
+.dup-cmp thead th { border-top: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
+.dup-cmp tbody th { color: var(--muted); font-weight: 500; }
+.dup-cmp col.l, .dup-cmp th:first-child { width: 120px; }
+.dup-cmp td.mark, .dup-cmp thead th:nth-child(3) { width: 44px; text-align: center; font-weight: 700; }
+.dup-cmp tr.eq .mark { color: var(--good); }
+.dup-cmp tr.diff td, .dup-cmp tr.diff th { background: #e29a1b24; }
+.dup-cmp tr.diff .mark { color: var(--mid); font-size: 16px; }
+.dup-cmp tr.diff td:not(.mark) { font-weight: 700; }
+.dup-cmp tr.unk .mark { color: var(--muted); }
+.dup-actions { display: flex; gap: 10px; flex-wrap: wrap; position: sticky; bottom: 0; padding: 10px 0 4px; background: var(--bg); }
+.dup-actions .btn { padding: 10px 16px; font-size: 14px; }
+.dup-actions kbd { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; opacity: .7; }
+.btn.warn { color: var(--bad); border-color: var(--bad); }
+.btn.neutral { color: var(--text); border-color: var(--border); }
+.dup-undo, .dup-msg { max-width: 1200px; margin: 0 auto 12px; padding: 8px 12px; border-radius: 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.dup-undo { background: var(--accent-2); }
+.dup-msg { background: #e29a1b24; border: 1px solid #e29a1b66; }
+.dup-end { display: flex; flex-direction: column; gap: 14px; align-items: center; }
+/* Trois onglets ne tiennent plus sur la ligne d'un téléphone : ils passent sur une seconde ligne de la barre. */
+@media (max-width: 520px) {
+  .topbar { flex-wrap: wrap; row-gap: 6px; }
+  .tabs { order: 10; flex-basis: 100%; }
+  .tabs a { flex: 1; text-align: center; }
+  .sort { max-width: none; margin-left: auto; }
+  .filters { top: var(--topbar-h, 96px); }
+}
+@media (max-width: 700px) {
+  #dups { padding: 12px; }
+  .dup-sides { grid-template-columns: 1fr; }
+  .dup-cmp th:first-child { width: 78px; }
+  .dup-cmp th, .dup-cmp td { padding: 6px 6px; }
+  .dup-cmp td.mark, .dup-cmp thead th:nth-child(3) { width: 28px; }
+  .dup-actions .btn { flex: 1; justify-content: center; padding: 10px 8px; }
+  .dup-actions kbd { display: none; }
 }

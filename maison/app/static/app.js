@@ -48,7 +48,7 @@ function cityKey(city, cp) {   // même logique que textparse.city_key côté Py
 const lKey = (l) => cityKey(eff(l, "city"), l.postal_code);
 const photos = (l) => (l.cluster && l.cluster.photos && l.cluster.photos.length ? l.cluster.photos
   : l.photos && l.photos.length ? l.photos.map((p) => "/photos/" + p) : l.photo_urls || []);
-const dpePill = (d) => `<span class="dpe-pill" style="background:${DPE_COL[d] || "#8a94a3"}">${d || "?"}</span>`;
+const dpePill = (d) => `<span class="dpe-pill" style="background:${DPE_COL[d] || "#8a94a3"}">${esc(d || "?")}</span>`;
 function trips(l) {
   const c = l.commute || {};
   return Object.entries(dests()).map(([k, d]) => `${esc(d.short || k)} ${c[k] ?? "?"} min`).join(" · ");
@@ -73,6 +73,7 @@ async function load() {
   state.all = l; state.crit = c;
   buildCities();
   render();
+  loadDups();
 }
 
 function buildCities() {
@@ -235,7 +236,7 @@ function evidenceText(ev) {
   const pair = (v, unit) => (v && v.length === 2 ? `${fmt(v[0])} / ${fmt(v[1])} ${unit}` : "");
   return [ev.rule, ev.photos ? `${ev.photos} photo${ev.photos > 1 ? "s" : ""} commune${ev.photos > 1 ? "s" : ""}` : "aucune photo commune",
     ev.price ? `prix ${pair(ev.price, "€")}` : "", ev.surface ? `surface ${pair(ev.surface, "m²")}` : "",
-    ev.distance_km != null ? `${ev.distance_km} km` : "", ev.text >= 0.2 ? `texte identique à ${Math.round(ev.text * 100)} %` : "",
+    ev.distance_km != null ? `${Number(ev.distance_km).toLocaleString("fr-FR")} km` : "", ev.text >= 0.2 ? `texte identique à ${Math.round(ev.text * 100)} %` : "",
     ev.veto ? `veto : ${ev.veto}` : ""]
     .filter(Boolean).map(esc).join(" · ");
 }
@@ -543,11 +544,200 @@ function render() {
   $("#count").textContent = `${items.length} annonce${items.length > 1 ? "s" : ""}`;
   $$(".tabs a").forEach((a) => a.classList.toggle("active", a.dataset.route === route));
   const main = $("#main");
+  if (route === "#/doublons") { main.className = "dupsonly"; renderDups(); return; }   // les filtres ne s'appliquent pas
   const wide = matchMedia("(min-width: 1280px)").matches;
   main.className = route === "#/map" ? "maponly" : wide ? "split" : "";
   if (route !== "#/map") $("#list").innerHTML = items.map(card).join("") || `<div class="empty">Aucune annonce ne correspond aux filtres.</div>`;
   if (main.className) renderMap(items);
 }
+
+/* ---------- onglet « Doublons » : revue rapide des doublons possibles (spec duplicate-review) ---------- */
+// File calculée par le serveur (un couple de biens par entrée). Une décision reste annulable DUP_DELAY ms avant
+// d'être envoyée (design D5) ; après chaque envoi, la file et la liste sont rechargées (D6).
+const DUP_DELAY = 5000;
+// Un couple est suivi par deux annonces {a, b} et non par sa clé : une fusion peut changer la principale d'un côté
+// (la clé « min-max » change), mais l'annonce reste dans le groupe, donc parmi les offres de ce côté.
+state.dups = { pairs: [], hidden: 0, all: false, loaded: false, cur: null, curIdx: 0, skipped: [], sent: [],
+               pending: null, decided: 0, msg: "", loadErr: "", req: 0 };
+const curRoute = () => (location.hash.startsWith("#/l/") ? state.lastRoute : location.hash || "#/");
+const dupsShown = () => curRoute() === "#/doublons" && $("#drawer").hidden;
+const sideIds = (s) => new Set([s.id, ...(s.offers || []).map((o) => o.id)]);
+function isCouple(p, t) {   // le couple p (côtés a, b) est-il le couple suivi t = {a, b} ?
+  if (!t) return false;
+  const A = sideIds(p.a), B = sideIds(p.b);
+  return (A.has(t.a) && B.has(t.b)) || (A.has(t.b) && B.has(t.a));
+}
+const track = (p) => ({ a: p.a.id, b: p.b.id });
+
+async function loadDups() {
+  const d = state.dups, req = ++d.req;
+  try {
+    const r = await fetch(`/api/duplicates?all=${d.all ? 1 : 0}`);
+    if (!r.ok) throw new Error(r.status);
+    const j = await r.json();
+    if (req !== d.req) return;                      // réponse périmée (case cochée entre-temps)
+    d.pairs = j.pairs; d.hidden = j.hidden; d.loaded = true; d.loadErr = "";
+    d.sent = d.sent.filter((t) => j.pairs.some((p) => isCouple(p, t)));   // enregistrée : le couple a disparu
+  } catch (e) {
+    if (req !== d.req) return;
+    d.loadErr = "File des doublons indisponible pour le moment.";
+  }
+  dupTab();
+  if (dupsShown()) renderDups();
+}
+function dupOpen(p) {   // ni envoyé, ni en attente d'envoi
+  const d = state.dups;
+  return !isCouple(p, d.pending) && !d.sent.some((t) => isCouple(p, t));
+}
+function dupQueue() {   // à présenter ; les couples passés sont gardés pour la fin
+  const d = state.dups, open = d.pairs.filter(dupOpen);
+  const skipped = (p) => d.skipped.some((t) => isCouple(p, t));
+  return { todo: open.filter((p) => !skipped(p)), skipped: open.filter(skipped) };
+}
+function dupTab() {
+  const n = state.dups.pairs.filter((p) => p.visible && dupOpen(p)).length;
+  $("#tab-dups").textContent = n ? `Doublons (${n})` : "Doublons";
+}
+function dupCurrent(todo) {   // même couple si possible, sinon celui qui a pris sa place dans la file
+  const d = state.dups;
+  const p = todo.find((x) => isCouple(x, d.cur)) || todo[Math.min(d.curIdx, todo.length - 1)] || null;
+  d.cur = p && track(p); d.curIdx = p ? todo.indexOf(p) : 0;
+  return p;
+}
+const DUP_ROWS = [["Prix", "price", "pct", (v) => `${fmt(v)} €`], ["Surface", "surface_m2", "m2", (v) => `${fmt(v)} m²`],
+  ["Terrain", "land_m2", "m2", (v) => `${fmt(v)} m²`], ["Pièces", "rooms", "eq", esc], ["Chambres", "bedrooms", "eq", esc],
+  ["DPE", "dpe", "eq", dpePill], ["Ville", "city", "text", esc], ["Adresse", "address", "text", esc],
+  ["Agence", "agency", "text", esc], ["Première vue", "first_seen", "day", (v) => new Date(v).toLocaleDateString("fr-FR")]];
+const DUP_MARK = { eq: ["=", "égal"], diff: ["≠", "différent"], unk: ["?", "inconnu d'un côté"] };
+const loose = (v) => norm(String(v)).replace(/[^a-z0-9]+/g, " ").trim();
+function dupCompare(kind, x, y) {
+  if (x == null || x === "" || y == null || y === "") return "unk";
+  // prix à 1 % près ; surfaces à 1 m² ou 1 % près, comme les « caractéristiques jumelles » de la détection
+  const tol = 0.01 * Math.max(Math.abs(x), Math.abs(y));
+  if (kind === "pct") return Math.abs(x - y) <= tol ? "eq" : "diff";
+  if (kind === "m2") return Math.abs(x - y) <= Math.max(1, tol) ? "eq" : "diff";
+  if (kind === "text") return loose(x) === loose(y) ? "eq" : "diff";
+  if (kind === "day") return new Date(x).toDateString() === new Date(y).toDateString() ? "eq" : "diff";
+  return String(x).toUpperCase() === String(y).toUpperCase() ? "eq" : "diff";
+}
+function dupTable(a, b) {
+  const show = (v, f) => (v == null || v === "" ? `<span class="muted">?</span>` : f(v));
+  const side = (s) => `#${s.id} · ${esc((s.sources || [s.source]).map(srcLabel).join(", "))}`;
+  return `<table class="dup-cmp"><thead><tr><th></th><th>${side(a)}</th><th></th><th>${side(b)}</th></tr></thead><tbody>
+    ${DUP_ROWS.map(([label, k, kind, f]) => {
+      const st = dupCompare(kind, a[k], b[k]);
+      return `<tr class="${st}" data-row="${k}"><th>${label}</th><td>${show(a[k], f)}</td>
+        <td class="mark" title="${DUP_MARK[st][1]}" aria-label="${DUP_MARK[st][1]}">${DUP_MARK[st][0]}</td><td>${show(b[k], f)}</td></tr>`;
+    }).join("")}</tbody></table>`;
+}
+function dupSide(s) {
+  const tags = [s.excluded_reason ? `<span class="b no">exclue : ${esc(s.excluded_reason)}</span>` : "",
+    s.reaction === "dislike" ? `<span class="b no">👎</span>` : s.reaction === "like" ? `<span class="b yes">👍</span>` : "",
+    s.active ? "" : `<span class="b mid">disparue</span>`].join("");
+  return `<div class="dup-side" data-side="${s.id}">
+    <div class="dup-side-head"><span class="score" style="position:relative;top:0;left:0;--s:${s.score ?? 0};--c:${scoreCol(s.score ?? 0)}"><span>${s.score ?? "–"}</span></span>
+      <div class="dup-side-title"><b>${esc(s.title || "Sans titre")}</b><div class="muted">#${s.id} · ${esc((s.sources || [s.source]).map(srcLabel).join(", "))}</div></div></div>
+    ${tags ? `<div class="badges">${tags}</div>` : ""}
+    <div class="dup-photos">${(s.photos || []).map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt=""></a>`).join("") || `<div class="nophoto">⌂</div>`}</div>
+    <div class="dup-links">${(s.offers || []).map((o) => `<a href="${esc(o.url)}" target="_blank" rel="noopener" class="${o.status === "active" ? "" : "gone"}">${esc(srcLabel(o.source))}${o.agency ? ` (${esc(o.agency)})` : ""}${o.price ? ` · ${fmt(o.price)} €` : ""}${OFFER_STATUS[o.status] ? ` · ${OFFER_STATUS[o.status]}` : ""} ↗</a>`).join("")}
+      <a class="btn ghost sm" href="#/l/${s.id}">Ouvrir la fiche</a></div></div>`;
+}
+function renderDups() {
+  const d = state.dups, { todo, skipped } = dupQueue(), p = dupCurrent(todo);
+  const pos = p ? `${d.curIdx + 1} / ${todo.length}` : "";
+  $("#count").textContent = p ? `${pos} couple${todo.length > 1 ? "s" : ""}` : "";
+  const head = `<div class="dup-head"><span class="dup-pos">${p ? `Couple ${pos}` : ""}${skipped.length ? ` <span class="muted">(+${skipped.length} passé${skipped.length > 1 ? "s" : ""})</span>` : ""}</span>
+    <label><input type="checkbox" id="dups-all" ${d.all ? "checked" : ""}> Inclure les biens écartés ou disparus${d.hidden ? ` (${d.hidden})` : ""}</label>
+    <span class="muted small-inline">F fusionner · N pas un doublon · S ou → passer · Z annuler</span></div>`;
+  const pd = d.pending;
+  const undo = pd ? `<div class="dup-undo">${pd.action === "merge" ? "Fusion" : "« Pas un doublon »"} de #${pd.a} et #${pd.b} : enregistrement dans quelques secondes.
+    <button class="btn ghost sm" data-dup-act="undo">Annuler (Z)</button></div>` : "";
+  const msg = [d.msg, d.loadErr].filter(Boolean).map((m) => `<div class="dup-msg">${esc(m)}</div>`).join("");
+  if (!d.loaded) { $("#dups").innerHTML = head + msg + `<div class="empty">Chargement…</div>`; return; }
+  if (!p) {
+    const more = skipped.length ? `<div><button class="btn" data-dup-act="replay">Revoir ${skipped.length > 1 ? `les ${skipped.length} couples passés` : "le couple passé"}</button></div>` : "";
+    $("#dups").innerHTML = head + undo + msg + `<div class="empty dup-end">${d.decided || skipped.length ? "Tous les doublons sont traités ✓" : "Aucun doublon à valider."}${more}</div>`;
+    return;
+  }
+  $("#dups").innerHTML = head + undo + msg + `<div class="dup-review" data-key="${p.key}">
+    <div class="dup-ev muted">${evidenceText(p.evidence || {})}${p.pairs > 1 ? ` · ${p.pairs} paires détectées entre ces biens` : ""}</div>
+    <div class="dup-sides">${dupSide(p.a)}${dupSide(p.b)}</div>
+    ${dupTable(p.a, p.b)}
+    <div class="dup-actions"><button class="btn ghost" data-dup-act="merge">Fusionner <kbd>F</kbd></button>
+      <button class="btn ghost warn" data-dup-act="reject">Pas un doublon <kbd>N</kbd></button>
+      <button class="btn ghost neutral" data-dup-act="skip">Passer <kbd>S</kbd></button></div></div>`;
+  const next = todo[d.curIdx + 1];   // préchargement des photos du couple suivant
+  if (next) for (const u of [...next.a.photos, ...next.b.photos]) new Image().src = u;
+}
+function dupDecide(action) {
+  const d = state.dups, p = dupCurrent(dupQueue().todo);
+  if (!p) return;
+  d.msg = "";
+  if (action === "skip") { d.skipped.push(track(p)); d.cur = null; return renderDups(); }
+  if (d.pending) dupCommit();                       // la décision précédente devient définitive
+  d.pending = { ...track(p), action, timer: setTimeout(() => dupCommit(), DUP_DELAY) };
+  d.cur = null; d.decided++;
+  dupTab(); renderDups();
+}
+function dupUndo() {
+  const d = state.dups, pd = d.pending;
+  if (!pd) return;
+  clearTimeout(pd.timer);
+  d.pending = null; d.cur = { a: pd.a, b: pd.b }; d.decided--; d.msg = "";
+  dupTab(); if (dupsShown()) renderDups();
+}
+async function dupCommit(keepalive = false) {
+  const d = state.dups, pd = d.pending;
+  if (!pd) return;
+  clearTimeout(pd.timer);
+  const sent = { a: pd.a, b: pd.b };
+  d.pending = null; d.sent.push(sent);
+  dupTab(); if (dupsShown()) renderDups();
+  let r = null;
+  try {
+    r = await fetch("/api/duplicates/decision", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive,
+      body: JSON.stringify({ a: pd.a, b: pd.b, action: pd.action }) });
+  } catch (e) { r = null; }
+  if (keepalive) return;                            // page en cours de fermeture
+  const pair = `#${pd.a} / #${pd.b}`;
+  if (!r || (!r.ok && r.status !== 409 && r.status !== 404)) {
+    d.sent = d.sent.filter((t) => t !== sent); d.decided--; d.cur = sent;   // le couple revient à l'écran
+    d.msg = `Enregistrement impossible (${r ? r.status : "réseau"}) : le couple ${pair} reste dans la file.`;
+  } else if (!r.ok) {
+    d.decided--;
+    d.msg = r.status === 409 ? `Couple ${pair} déjà traité entre-temps : rien n'a été enregistré.`
+      : `Couple ${pair} introuvable : rien n'a été enregistré.`;
+  }
+  dupTab(); if (dupsShown()) renderDups();          // message visible même si le rechargement échoue
+  try { await load(); } catch (e) { /* hors ligne : la liste se rechargera à la prochaine action */ }
+}
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-dup-act]");
+  if (!b) return;
+  const act = b.dataset.dupAct, d = state.dups;
+  if (act === "undo") return dupUndo();
+  if (act === "replay") { d.skipped = []; d.cur = null; d.curIdx = 0; d.msg = ""; return renderDups(); }
+  dupDecide(act);
+});
+document.addEventListener("change", (ev) => {
+  if (ev.target.id !== "dups-all") return;
+  state.dups.all = ev.target.checked; state.dups.cur = null; state.dups.curIdx = 0;
+  loadDups();
+});
+document.addEventListener("keydown", (ev) => {   // raccourcis de la revue : fiche fermée, hors saisie
+  if (!dupsShown() || location.hash !== "#/doublons") return;
+  if (ev.ctrlKey || ev.metaKey || ev.altKey || ev.repeat) return;
+  if (ev.target.closest("textarea, select, [contenteditable], input:not([type=checkbox]):not([type=radio])")) return;
+  const act = { f: "merge", n: "reject", s: "skip", arrowright: "skip", z: "undo" }[ev.key.toLowerCase()];
+  if (!act) return;
+  ev.preventDefault();
+  if (act === "undo") dupUndo(); else dupDecide(act);
+});
+// Quitter l'onglet (hors ouverture d'une fiche) ou la page enregistre la décision en attente.
+window.addEventListener("hashchange", () => {
+  if (state.dups.pending && location.hash !== "#/doublons" && !location.hash.startsWith("#/l/")) dupCommit();
+});
+window.addEventListener("pagehide", () => dupCommit(true));
 
 /* ---------- événements ---------- */
 document.addEventListener("click", async (ev) => {

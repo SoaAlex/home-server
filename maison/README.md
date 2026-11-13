@@ -58,6 +58,12 @@ qui changent d'identifiant à chaque envoi). Les doublons sont **fusionnés** en
 - **UI** : menu « Annonces ↗ » des liens et prix, section « Sources fusionnées » (bouton *Séparer*), bloc
   « Doublon possible » (*Fusionner* / *Pas un doublon*), bouton « 🔗 Fusionner avec… » (doublon non détecté,
   numéro de l'autre annonce), puce « Doublons à valider ». Un refus est définitif ; seule une fusion manuelle le lève.
+- **Onglet « Doublons »** (`#/doublons`, `GET /api/duplicates`) : revue rapide des doublons possibles, un couple de
+  biens à la fois (au moins un côté actif et non exclu ; case pour inclure les autres), du meilleur score au moins
+  bon. Photos côte à côte, preuves de la détection, tableau comparatif (égal / différent / inconnu d'un côté). Touches
+  `F` fusionner, `N` pas un doublon, `S` ou `→` passer (couple reproposé en fin de visite), `Z` annuler : une
+  décision n'est envoyée (`POST /api/duplicates/decision`) qu'après 5 s, à la décision suivante ou en quittant
+  l'onglet. Un couple déjà traité entre-temps (fusion du collecteur, refus) est refusé (409) et quitte la file.
 
 Analyse initiale (une fois, ou pour un nouveau rapport) — à blanc par défaut, rapport HTML autonome :
 ```bash
