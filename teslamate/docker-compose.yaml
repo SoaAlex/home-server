@@ -32,6 +32,10 @@ services:
       - teslamate-grafana-data:/var/lib/grafana
       - /volume1/docker/teslamate/Teslamate-CustomGrafanaDashboards/customdashboards.yml:/etc/grafana/provisioning/dashboards/customdashboards.yml
       - /volume1/docker/teslamate/Teslamate-CustomGrafanaDashboards/dashboards:/TeslamateCustomDashboards
+    # gid 10 = admin: UGOS resets /volume1/docker at every boot and only lets that group in,
+    # so Grafana (uid 472) must join it to read the bind-mounted dashboards
+    group_add:
+      - "10"
     networks:
       - default
       - common-network
