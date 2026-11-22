@@ -1,12 +1,15 @@
 // UI sans framework : charge /api/listings une fois, filtre/tri côté client.
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
-const state = { all: [], crit: null, map: null, layer: null, markers: {}, chips: new Set(), type: "", dpe: "",
+const state = { all: [], crit: null, map: null, layer: null, markers: {}, chips: new Set(), types: new Set(), dpe: "",
                 cities: new Set(), photos: [], photoIdx: 0, lastRoute: "#/", openId: null };
 const DPE = "ABCDEFG";
 const DPE_COL = { A: "#009c6d", B: "#52b153", C: "#a5cc74", D: "#e0c90c", E: "#f0b50f", F: "#eb8235", G: "#d7221f" };
 const TYPES = { detached: "Individuelle", link_detached: "Accolée par le garage", semi: "Semi-individuelle",
                 terraced: "Mitoyenne", unknown: "Type inconnu" };
+// Filtre « Type » : plusieurs catégories à la fois (state.types vide = tous les types). « other » = mitoyenne ou inconnue.
+const TYPE_FILTERS = ["detached", "link_detached", "semi"];
+const typeFilterKey = (t) => (TYPE_FILTERS.includes(t) ? t : "other");
 const TYPE_SRC = { user: "utilisateur", agent: "agent", map: "carte", listing: "annonce" };
 const TYPE_CONF = { high: "sûr", medium: "probable", low: "incertain" };
 const STYLES = { traditional: "traditionnelle", modern: "moderne", cubic: "cubique", mixed: "mixte" };
@@ -113,8 +116,7 @@ function filtered() {
   let out = state.all.filter((l) => {
     if ((l.score || 0) < minScore && !l.excluded_reason) return false;
     if ((eff(l, "price") || 0) > maxPrice) return false;
-    const t = eff(l, "property_type");
-    if (state.type && (state.type === "other" ? ["detached", "link_detached", "semi"].includes(t) : t !== state.type)) return false;
+    if (state.types.size && !state.types.has(typeFilterKey(eff(l, "property_type")))) return false;
     if (state.dpe && (!eff(l, "dpe") || DPE.indexOf(eff(l, "dpe")) > DPE.indexOf(state.dpe))) return false;
     if (state.cities.size && !state.cities.has(lKey(l))) return false;
     if (ch.has("garage") && eff(l, "has_garage") !== true) return false;
@@ -859,8 +861,22 @@ document.addEventListener("click", async (ev) => {
   const chip = ev.target.closest("[data-chip]");
   if (chip) { const k = chip.dataset.chip; state.chips.has(k) ? state.chips.delete(k) : state.chips.add(k); chip.classList.toggle("on"); return rerender(); }
   const seg = ev.target.closest(".seg button");
-  if (seg) { $$("button", seg.parentElement).forEach((x) => x.classList.toggle("on", x === seg)); state[seg.parentElement.id === "f-type" ? "type" : "dpe"] = seg.dataset.v; return rerender(); }
+  if (seg && seg.parentElement.id === "f-type") {   // types : choix multiples, chaque bouton bascule sa catégorie, « Tous » vide la sélection
+    const v = seg.dataset.v;
+    if (!v) state.types.clear(); else if (state.types.has(v)) state.types.delete(v); else state.types.add(v);
+    syncTypeButtons();
+    return rerender();
+  }
+  if (seg) { $$("button", seg.parentElement).forEach((x) => x.classList.toggle("on", x === seg)); state.dpe = seg.dataset.v; return rerender(); }
 });
+// Boutons du filtre « Type » reflétant state.types ; « Tous » allumé tant que rien n'est choisi.
+function syncTypeButtons() {
+  $$("#f-type button").forEach((b) => {
+    const on = b.dataset.v ? state.types.has(b.dataset.v) : !state.types.size;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-pressed", on);
+  });
+}
 function rerender() { state.rendered = false; render(); }
 document.addEventListener("mouseover", (ev) => { const c = ev.target.closest(".card"); if (c) highlight(+c.dataset.id, true); });
 document.addEventListener("mouseout", (ev) => { const c = ev.target.closest(".card"); if (c) highlight(+c.dataset.id, false); });
@@ -907,9 +923,10 @@ $("#f-sort").addEventListener("change", rerender);
 $("#f-reset").addEventListener("click", () => {
   $$("#filters input").forEach((i) => (i.type === "checkbox" ? (i.checked = false) : (i.value = i.type === "range" ? 0 : "")));
   $("#f-hide-disliked").checked = true;
-  $("#o-score").textContent = "0"; state.chips.clear(); state.cities.clear(); state.type = state.dpe = "";
+  $("#o-score").textContent = "0"; state.chips.clear(); state.cities.clear(); state.types.clear(); state.dpe = "";
   $$("#quick button").forEach((b) => b.classList.remove("on"));
   $$(".seg").forEach((s) => $$("button", s).forEach((b, i) => b.classList.toggle("on", i === 0)));
+  syncTypeButtons();
   state.rendered = false; load();
 });
 $("#btn-theme").addEventListener("click", () => {

@@ -171,15 +171,38 @@ Le type retenu SHALL être le seul utilisé par :
 - **THEN** chaque annonce porte son type retenu, la source de ce type et le résumé du calcul cartographique
 
 ### Requirement: Filtre par type
-Le filtre de type de la liste SHALL proposer :
-- Tous ;
+Le filtre de type de la liste SHALL permettre de combiner plusieurs catégories : chaque bouton de catégorie s'allume ou s'éteint à chaque clic, et les annonces affichées sont celles dont le type retenu appartient à la sélection. Les boutons sont :
+- Tous (aucune catégorie choisie, donc aucun filtre sur le type) ;
 - Individuelle ;
 - Par garage (`link_detached`) ;
 - Semi ;
 - Autre (mitoyenne et inconnue).
 
-Il porte sur le type retenu.
+« Tous » est allumé tant qu'aucune catégorie n'est choisie, et un clic sur « Tous » vide la sélection. Le filtre porte sur le type retenu, se combine par ET avec les autres filtres, et « Réinitialiser les filtres » vide la sélection. Les boutons portent `aria-pressed`, et le titre de la section indique que plusieurs choix sont possibles.
 
 #### Scenario: Filtre « Par garage »
 - **WHEN** l'utilisateur choisit « Par garage »
 - **THEN** seules les annonces de type retenu `link_detached` restent affichées
+
+#### Scenario: Plusieurs types à la fois
+- **WHEN** l'utilisateur choisit « Individuelle » puis « Semi »
+- **THEN** les deux boutons sont allumés et « Tous » est éteint
+- **AND** les annonces de type retenu `detached` ou `semi` restent affichées, dans le même ordre que sans filtre
+
+#### Scenario: Retrait d'un type
+- **WHEN** « Individuelle » et « Semi » sont choisis et que l'utilisateur clique de nouveau sur « Individuelle »
+- **THEN** seules les annonces `semi` restent affichées
+- **AND** en retirant aussi « Semi », « Tous » se rallume et toutes les annonces reviennent
+
+#### Scenario: Retour à « Tous »
+- **WHEN** plusieurs types sont choisis et que l'utilisateur clique sur « Tous »
+- **THEN** la sélection est vidée, « Tous » est allumé et le filtre ne porte plus sur le type
+
+#### Scenario: Types combinés aux autres filtres
+- **WHEN** « Individuelle » et « Semi » sont choisis avec un DPE maximum « D »
+- **THEN** seules restent les annonces de ces deux types dont le DPE est D ou meilleur
+- **AND** le DPE maximum reste à choix unique : choisir « C » remplace « D »
+
+#### Scenario: Réinitialisation
+- **WHEN** des types sont choisis et que l'utilisateur clique sur « Réinitialiser les filtres »
+- **THEN** aucune catégorie n'est plus choisie et « Tous » est allumé

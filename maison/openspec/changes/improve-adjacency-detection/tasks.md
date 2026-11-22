@@ -153,6 +153,10 @@
   - une correction survit au rechargement de la page (relue par l'API) ;
   - le nombre d'annonces du filtre « Par garage » est égal au nombre renvoyé par l'API ;
   - captures bureau et mobile.
+- [x] 6.5 Filtre « Type » à choix multiples (demande d'Alexandre, 2026-11-22) : chaque bouton bascule sa catégorie, « Tous » vide la sélection, combinaison par ET avec les autres filtres, vidé par « Réinitialiser les filtres ». `state.type` devient l'ensemble `state.types`, `aria-pressed` sur les boutons, `?v=` de `app.js` et de `style.css` à 16. UI seule : aucune donnée ni API touchée. Vérifié dans Chromium sur les données de production (aucune écriture) :
+  - les 15 combinaisons non vides des quatre catégories : annonces, ordre, compteur et boutons égaux au calcul du type retenu fait à partir de l'API ;
+  - DPE toujours à choix unique, « Réinitialiser », « Afficher les exclues », carte (un marqueur par annonce filtrée et positionnée) ;
+  - captures bureau clair et sombre, mobile.
 
 ## 7. Rattrapage
 

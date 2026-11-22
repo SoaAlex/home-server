@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="light dark">
 <title>Maison — recherche</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="/static/style.css?v=15">
+<link rel="stylesheet" href="/static/style.css?v=16">
 <script>document.documentElement.dataset.theme = localStorage.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");</script>
 </head>
 <body>
@@ -65,11 +65,11 @@
       <small class="hint" id="f-land-hint" aria-live="polite" hidden></small>
     </section>
     <section>
-      <h4>Type</h4>
-      <div class="seg" id="f-type">
-        <button data-v="" class="on">Tous</button><button data-v="detached">Individuelle</button>
-        <button data-v="link_detached" title="Accolée par le garage">Par garage</button>
-        <button data-v="semi">Semi</button><button data-v="other" title="Mitoyenne ou inconnue">Autre</button>
+      <h4><span>Type <span class="unit">(plusieurs choix possibles)</span></span></h4>
+      <div class="seg" id="f-type" role="group" aria-label="Type de maison, plusieurs choix possibles">
+        <button data-v="" class="on" aria-pressed="true" title="Aucun filtre sur le type">Tous</button><button data-v="detached" aria-pressed="false">Individuelle</button>
+        <button data-v="link_detached" aria-pressed="false" title="Accolée par le garage">Par garage</button>
+        <button data-v="semi" aria-pressed="false">Semi</button><button data-v="other" aria-pressed="false" title="Mitoyenne ou inconnue">Autre</button>
       </div>
     </section>
     <section>
@@ -103,6 +103,6 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="/static/app.js?v=15"></script>
+<script src="/static/app.js?v=16"></script>
 </body>
 </html>
